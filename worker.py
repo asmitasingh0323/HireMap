@@ -1,0 +1,79 @@
+import os
+import sys
+import json
+import time
+import pika
+from dotenv import load_dotenv
+from fetchers import FETCHERS
+from db_utils import save_jobs
+
+load_dotenv()
+
+RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
+RABBIT_USER = os.getenv("RABBIT_USER", "hiremap")
+RABBIT_PASS = os.getenv("RABBIT_PASS", "hiremap_pass")
+TASK_QUEUE = "task_queue"
+
+# Each worker gets an ID so we can see which one did what
+WORKER_ID = sys.argv[1] if len(sys.argv) > 1 else f"worker-{os.getpid()}"
+
+
+def connect():
+    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    params = pika.ConnectionParameters(
+        host=RABBIT_HOST, port=int(os.getenv("RABBIT_PORT", 5672)), credentials=creds, heartbeat=600)
+    return pika.BlockingConnection(params)
+
+
+def process_task(ch, method, properties, body):
+    task = json.loads(body)
+    source = task["source"]
+    keyword = task.get("keyword")
+    location = task.get("location")
+    search_id = task.get("search_id", "manual")
+
+    print(f"[{WORKER_ID}] Received task: source={source}, keyword={keyword}, location={location}")
+    start = time.time()
+
+    try:
+        fetch_fn = FETCHERS.get(source)
+        if not fetch_fn:
+            print(f"[{WORKER_ID}] Unknown source '{source}', discarding task.")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        jobs = fetch_fn(keyword=keyword, location=location)
+        inserted, skipped = save_jobs(jobs, search_id)
+        duration = round(time.time() - start, 2)
+        print(f"[{WORKER_ID}] DONE source={source}: fetched={len(jobs)}, "
+              f"inserted={inserted}, skipped_dupes={skipped}, time={duration}s")
+
+        # ACK only after data is safely saved — this is the fault-tolerance guarantee
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    except Exception as e:
+        print(f"[{WORKER_ID}] ERROR on source={source}: {e}")
+        # ACK gracefully so a failing source doesn't requeue forever (per your report 4)
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
+def main():
+    conn = connect()
+    ch = conn.channel()
+    ch.queue_declare(queue=TASK_QUEUE, durable=True)
+
+    # Fair dispatch: don't give a worker a new task until it ACKs the current one
+    ch.basic_qos(prefetch_count=1)
+    ch.basic_consume(queue=TASK_QUEUE, on_message_callback=process_task)
+
+    print(f"[{WORKER_ID}] Waiting for tasks. Press CTRL+C to exit.")
+    try:
+        ch.start_consuming()
+    except KeyboardInterrupt:
+        print(f"[{WORKER_ID}] Shutting down.")
+        ch.stop_consuming()
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()

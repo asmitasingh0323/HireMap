@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: hiremap_postgres
+    environment:
+      POSTGRES_USER: hiremap
+      POSTGRES_PASSWORD: hiremap_pass
+      POSTGRES_DB: hiremap_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: hiremap_rabbitmq
+    ports:
+      - "5673:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: hiremap
+      RABBITMQ_DEFAULT_PASS: hiremap_pass
+
+volumes:
+  pgdata:
