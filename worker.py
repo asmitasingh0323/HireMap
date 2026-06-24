@@ -6,7 +6,7 @@ import threading
 import pika
 from dotenv import load_dotenv
 from fetchers import FETCHERS
-from db_utils import save_jobs
+from db_utils import save_jobs, record_task_status
 
 load_dotenv()
 
@@ -73,6 +73,10 @@ def process_task(ch, method, properties, body):
         duration = round(time.time() - start, 2)
         print(f"[{WORKER_ID}] DONE source={source}: fetched={len(jobs)}, "
               f"inserted={inserted}, skipped_dupes={skipped}, time={duration}s")
+
+        # Record task completion in the DB (even if 0 jobs found) so the API knows this source finished.
+        # ON CONFLICT keeps it idempotent if a task is ever retried.
+        record_task_status(search_id, source, WORKER_ID, len(jobs), inserted)
 
         # ACK only after data is safely saved — this is the fault-tolerance guarantee
         ch.basic_ack(delivery_tag=method.delivery_tag)
