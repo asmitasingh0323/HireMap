@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import threading
 import pika
 from dotenv import load_dotenv
 from fetchers import FETCHERS
@@ -23,6 +24,31 @@ def connect():
     params = pika.ConnectionParameters(
         host=RABBIT_HOST, port=int(os.getenv("RABBIT_PORT", 5672)), credentials=creds, heartbeat=600)
     return pika.BlockingConnection(params)
+
+
+HEARTBEAT_QUEUE = "heartbeat_queue"
+HEARTBEAT_INTERVAL = 3  # seconds between heartbeats
+
+
+def start_heartbeat():
+    """Background thread: publishes a heartbeat for this worker every few seconds."""
+    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
+    params = pika.ConnectionParameters(
+        host=RABBIT_HOST, port=int(os.getenv("RABBIT_PORT", 5672)), credentials=creds
+    )
+    conn = pika.BlockingConnection(params)
+    ch = conn.channel()
+    ch.queue_declare(queue=HEARTBEAT_QUEUE, durable=True)
+    while True:
+        msg = {"worker_id": WORKER_ID, "timestamp": time.time()}
+        try:
+            ch.basic_publish(
+                exchange="", routing_key=HEARTBEAT_QUEUE, body=json.dumps(msg)
+            )
+        except Exception as e:
+            print(f"[{WORKER_ID}] heartbeat error: {e}")
+            break
+        time.sleep(HEARTBEAT_INTERVAL)
 
 
 def process_task(ch, method, properties, body):
@@ -58,6 +84,9 @@ def process_task(ch, method, properties, body):
 
 
 def main():
+    # Start the heartbeat in a background thread (daemon = dies when worker dies)
+    hb_thread = threading.Thread(target=start_heartbeat, daemon=True)
+    hb_thread.start()
     conn = connect()
     ch = conn.channel()
     ch.queue_declare(queue=TASK_QUEUE, durable=True)
