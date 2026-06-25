@@ -1,0 +1,8 @@
+requests
+beautifulsoup4
+psycopg2-binary
+pika
+python-dotenv
+flask
+flask-cors
+flask-socketio
