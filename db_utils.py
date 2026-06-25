@@ -29,9 +29,9 @@ def save_jobs(jobs, search_id):
     for j in jobs:
         cur.execute("""
             INSERT INTO jobs (title, company, location, skills, salary_min, salary_max,
-                              job_type, experience_level, posted_date, source, fingerprint, search_id)
+                              job_type, experience_level, posted_date, source, fingerprint, search_id, url)
             VALUES (%(title)s, %(company)s, %(location)s, %(skills)s, %(salary_min)s, %(salary_max)s,
-                    %(job_type)s, %(experience_level)s, %(posted_date)s, %(source)s, %(fingerprint)s, %(search_id)s)
+                    %(job_type)s, %(experience_level)s, %(posted_date)s, %(source)s, %(fingerprint)s, %(search_id)s, %(url)s)
             ON CONFLICT (fingerprint) DO UPDATE SET search_id = EXCLUDED.search_id
             RETURNING (xmax = 0) AS is_new
         """, {**j, "search_id": search_id})

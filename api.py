@@ -2,11 +2,15 @@ import os
 import json
 import uuid
 import time
+import datetime
+from decimal import Decimal
+import threading
 import pika
 import psycopg2
 import psycopg2.extras
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,12 +31,27 @@ DB_CONFIG = {
 
 SOURCES = ["adzuna", "remoteok", "weworkremotely"]
 
+
+def jsonable(rows):
+    """Convert DB rows into JSON-safe dicts (dates -> strings, Decimals -> floats)."""
+    clean = []
+    for r in rows:
+        d = dict(r)
+        for k, v in d.items():
+            if isinstance(v, (datetime.date, datetime.datetime)):
+                d[k] = v.isoformat()
+            elif isinstance(v, Decimal):
+                d[k] = float(v)
+        clean.append(d)
+    return clean
+
+
 app = Flask(__name__)
-CORS(app)  # allow the React frontend to call this API
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 
 def publish_tasks(keyword, location, search_id, deadline_ts):
-    """Publish one task per source, tagged with search_id and deadline."""
     creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
     params = pika.ConnectionParameters(
         host=RABBIT_HOST, port=RABBIT_PORT, credentials=creds)
@@ -51,13 +70,26 @@ def publish_tasks(keyword, location, search_id, deadline_ts):
     conn.close()
 
 
-def fetch_results(search_id):
-    """Read all jobs stored so far for this search_id."""
+def fetch_results_for_source(search_id, source):
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
-               job_type, experience_level, posted_date, source
+               job_type, experience_level, posted_date, source, url
+        FROM jobs WHERE search_id = %s AND source = %s
+    """, (search_id, source))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def fetch_all_results(search_id):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT title, company, location, skills, salary_min, salary_max,
+               job_type, experience_level, posted_date, source, url
         FROM jobs WHERE search_id = %s ORDER BY source
     """, (search_id,))
     rows = cur.fetchall()
@@ -66,22 +98,64 @@ def fetch_results(search_id):
     return rows
 
 
-def wait_for_completion(search_id, deadline_ts):
-    """Poll the task_status table until all sources report done for this search_id,
-    or until the deadline passes. Returns the set of completed source names."""
-    completed = set()
-    while time.time() < deadline_ts and len(completed) < len(SOURCES):
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT source FROM task_status WHERE search_id = %s", (search_id,))
-        completed = set(row[0] for row in cur.fetchall())
-        cur.close()
-        conn.close()
-        if len(completed) >= len(SOURCES):
+def get_completed_sources(search_id):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT source FROM task_status WHERE search_id = %s", (search_id,))
+    done = set(row[0] for row in cur.fetchall())
+    cur.close()
+    conn.close()
+    return done
+
+
+def jsonable(rows):
+    """Convert DB rows into JSON-safe dicts (dates -> strings, Decimals -> floats)."""
+    clean = []
+    for r in rows:
+        d = dict(r)
+        for k, v in d.items():
+            if isinstance(v, (datetime.date, datetime.datetime)):
+                d[k] = v.isoformat()
+            elif isinstance(v, Decimal):
+                d[k] = float(v)
+        clean.append(d)
+    return clean
+
+
+def run_search(keyword, location, deadline_seconds, search_id):
+    """Background task: publish work, then emit a socket event each time a
+    source finishes, and a final event at completion or deadline."""
+    deadline_ts = time.time() + deadline_seconds
+    socketio.emit("search_started", {
+        "search_id": search_id, "keyword": keyword, "location": location,
+        "deadline_seconds": deadline_seconds, "sources": SOURCES,
+    })
+
+    publish_tasks(keyword, location, search_id, deadline_ts)
+
+    emitted = set()
+    while time.time() < deadline_ts and len(emitted) < len(SOURCES):
+        done = get_completed_sources(search_id)
+        new_sources = done - emitted
+        for source in new_sources:
+            jobs = fetch_results_for_source(search_id, source)
+            socketio.emit("source_done", {
+                "search_id": search_id, "source": source,
+                "count": len(jobs), "jobs": jsonable(jobs),
+            })
+            emitted.add(source)
+        if len(emitted) >= len(SOURCES):
             break
-        time.sleep(0.3)
-    return completed
+        socketio.sleep(0.3)
+
+    all_results = fetch_all_results(search_id)
+    socketio.emit("search_complete", {
+        "search_id": search_id,
+        "total_results": len(all_results),
+        "completed_sources": sorted(emitted),
+        "complete": len(emitted) == len(SOURCES),
+    })
 
 
 @app.route("/api/search", methods=["POST"])
@@ -89,34 +163,16 @@ def search():
     data = request.get_json(force=True)
     keyword = data.get("keyword", "").strip()
     location = data.get("location", "").strip()
-    deadline_seconds = float(data.get("deadline", 10))  # default 10s SLA
-
+    deadline_seconds = float(data.get("deadline", 10))
     if not keyword:
         return jsonify({"error": "keyword is required"}), 400
 
     search_id = str(uuid.uuid4())[:8]
-    deadline_ts = time.time() + deadline_seconds
-
-    publish_tasks(keyword, location, search_id, deadline_ts)
-
-    # Wait until the deadline OR until all sources report completion, whichever comes first.
-    completed_sources = wait_for_completion(search_id, deadline_ts)
-
-    # Deadline (or early completion) reached: return whatever has landed
-    results = fetch_results(search_id)
-    sources_with_data = sorted(set(r["source"] for r in results))
-    return jsonify({
-        "search_id": search_id,
-        "keyword": keyword,
-        "location": location,
-        "deadline_seconds": deadline_seconds,
-        "total_results": len(results),
-        # sources that FINISHED (even if 0 jobs)
-        "completed_sources": sorted(completed_sources),
-        "sources_with_data": sources_with_data,           # sources that returned >=1 job
-        "complete": len(completed_sources) == len(SOURCES),
-        "results": results,
-    })
+    # Run the search in the background so the HTTP call returns immediately;
+    # results stream to the client over the socket.
+    socketio.start_background_task(
+        run_search, keyword, location, deadline_seconds, search_id)
+    return jsonify({"search_id": search_id, "status": "started"})
 
 
 @app.route("/api/health", methods=["GET"])
@@ -124,5 +180,11 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@socketio.on("connect")
+def on_connect():
+    print("[api] client connected")
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000,
+                 debug=True, allow_unsafe_werkzeug=True)

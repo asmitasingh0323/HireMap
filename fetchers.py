@@ -31,6 +31,7 @@ def fetch_adzuna(keyword, location, max_results=20):
             "job_type": item.get("contract_time"), "experience_level": None,
             "posted_date": (item.get("created") or "")[:10] or None,
             "source": "adzuna", "fingerprint": make_fingerprint(title, company, loc),
+            "url": item.get("redirect_url"),
         })
     return jobs
 
@@ -60,6 +61,7 @@ def fetch_remoteok(keyword=None, location=None):
             "job_type": "remote", "experience_level": None,
             "posted_date": (item.get("date") or "")[:10] or None,
             "source": "remoteok", "fingerprint": make_fingerprint(title, company, loc),
+            "url": item.get("url") or item.get("apply_url"),
         })
     return jobs
 
@@ -80,11 +82,16 @@ def fetch_wwr(keyword="python", location=None):
         title = title_el.get_text(strip=True)
         company = company_el.get_text(strip=True) if company_el else None
         loc = region_el.get_text(strip=True) if region_el else "Remote"
+        link_el = li.select_one(
+            "a.listing-link--unlocked") or li.find("a", href=True)
+        job_url = ("https://weworkremotely.com" +
+                   link_el["href"]) if link_el and link_el.get("href") else None
         jobs.append({
             "title": title, "company": company, "location": loc, "skills": None,
             "salary_min": None, "salary_max": None, "job_type": "remote",
             "experience_level": None, "posted_date": None,
             "source": "weworkremotely", "fingerprint": make_fingerprint(title, company, loc),
+            "url": job_url,
         })
     return jobs
 

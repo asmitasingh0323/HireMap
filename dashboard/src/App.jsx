@@ -182,6 +182,7 @@ export default function App() {
         {jobs.map((j, i) => (
           <div key={i} className="job-card">
             <div className="job-top">
+              <span className="job-num">#{i + 1}</span>
               <span className="job-title">{j.title}</span>
               <span className="job-source" style={{ background: SOURCE_COLORS[j.source] || "#888" }}>
                 {j.source}
@@ -190,8 +191,17 @@ export default function App() {
             <div className="job-company">{j.company || "Unknown company"}</div>
             <div className="job-meta">
               {j.location || "—"}
-              {j.salary_min ? ` · $${Math.round(j.salary_min)}+` : ""}
+              {j.salary_min ? ` · $${Math.round(j.salary_min).toLocaleString()}+` : ""}
               {j.skills ? ` · ${j.skills.split(",").slice(0, 3).join(", ")}` : ""}
+            </div>
+            <div className="job-actions">
+              {j.url ? (
+                <a className="apply-btn" href={j.url} target="_blank" rel="noopener noreferrer">
+                  Apply →
+                </a>
+              ) : (
+                <span className="apply-btn disabled">No link</span>
+              )}
             </div>
           </div>
         ))}
