@@ -79,12 +79,16 @@ def process_task(ch, method, properties, body):
 
 
 def main():
-    # Start the heartbeat in a background thread (daemon = dies when worker dies)
-    hb_thread = threading.Thread(target=start_heartbeat, daemon=True)
-    hb_thread.start()
+    # Skip heartbeat in the cloud (no local monitor there; saves a RabbitMQ connection)
+    if os.getenv("ENABLE_HEARTBEAT", "true").lower() == "true":
+        hb_thread = threading.Thread(target=start_heartbeat, daemon=True)
+        hb_thread.start()
+
+    print(f"[{WORKER_ID}] connecting to RabbitMQ...", flush=True)
     conn = connect()
     ch = conn.channel()
     ch.queue_declare(queue=TASK_QUEUE, durable=True)
+    print(f"[{WORKER_ID}] connected, queue declared", flush=True)
 
     # Fair dispatch: don't give a worker a new task until it ACKs the current one
     ch.basic_qos(prefetch_count=1)
