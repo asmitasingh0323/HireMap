@@ -4,8 +4,8 @@
 
 body {
   margin: 0;
-  background: #0f1420;
-  color: #e6e9ef;
+  background: #f4f6fb;
+  color: #1a2233;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -21,7 +21,7 @@ body {
   align-items: baseline;
   gap: 14px;
   flex-wrap: wrap;
-  border-bottom: 1px solid #232a3a;
+  border-bottom: 1px solid #e2e7f0;
   padding-bottom: 16px;
   margin-bottom: 20px;
 }
@@ -29,13 +29,13 @@ body {
 .header h1 {
   margin: 0;
   font-size: 28px;
-  color: #4f8cff;
+  color: #2563eb;
   letter-spacing: -0.5px;
 }
 
 .tagline {
   margin: 0;
-  color: #8a93a6;
+  color: #6b7488;
   font-size: 14px;
 }
 
@@ -47,13 +47,13 @@ body {
 }
 
 .conn.on {
-  color: #22c55e;
-  background: #102a18;
+  color: #16a34a;
+  background: #e7f8ee;
 }
 
 .conn.off {
-  color: #ef4444;
-  background: #2a1010;
+  color: #dc2626;
+  background: #fdeaea;
 }
 
 /* SEARCH BAR */
@@ -62,10 +62,12 @@ body {
   gap: 12px;
   flex-wrap: wrap;
   align-items: center;
-  background: #161c2b;
+  background: #ffffff;
   padding: 16px;
   border-radius: 12px;
   margin-bottom: 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  border: 1px solid #e2e7f0;
 }
 
 .search-bar input[type="text"],
@@ -75,9 +77,9 @@ body {
 }
 
 .search-bar input {
-  background: #0f1420;
-  border: 1px solid #2a3344;
-  color: #e6e9ef;
+  background: #f9fafc;
+  border: 1px solid #d4dae6;
+  color: #1a2233;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 14px;
@@ -92,11 +94,11 @@ body {
 
 .deadline label {
   font-size: 13px;
-  color: #8a93a6;
+  color: #6b7488;
 }
 
 .search-bar button {
-  background: #4f8cff;
+  background: #2563eb;
   color: #fff;
   border: none;
   padding: 11px 24px;
@@ -107,7 +109,7 @@ body {
 }
 
 .search-bar button:disabled {
-  background: #2a3344;
+  background: #b9c2d4;
   cursor: not-allowed;
 }
 
@@ -123,8 +125,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #161c2b;
-  border: 1px solid #232a3a;
+  background: #ffffff;
+  border: 1px solid #e2e7f0;
   padding: 8px 14px;
   border-radius: 24px;
   font-size: 14px;
@@ -138,19 +140,19 @@ body {
 
 .source-chip .state {
   font-size: 12px;
-  color: #8a93a6;
+  color: #6b7488;
 }
 
 .source-chip.done {
-  border-color: #22c55e44;
+  border-color: #16a34a55;
 }
 
 .source-chip.done .state {
-  color: #22c55e;
+  color: #16a34a;
 }
 
 .source-chip.pending .state {
-  color: #f59e0b;
+  color: #d97706;
 }
 
 /* SUMMARY */
@@ -162,13 +164,15 @@ body {
 }
 
 .summary.complete {
-  background: #102a18;
-  border: 1px solid #22c55e44;
+  background: #e7f8ee;
+  border: 1px solid #16a34a55;
+  color: #14532d;
 }
 
 .summary.partial {
-  background: #2a2410;
-  border: 1px solid #f59e0b44;
+  background: #fef6e7;
+  border: 1px solid #d9770655;
+  color: #7c4a03;
 }
 
 /* CHARTS */
@@ -180,15 +184,17 @@ body {
 }
 
 .chart-card {
-  background: #161c2b;
+  background: #ffffff;
   border-radius: 12px;
   padding: 16px;
+  border: 1px solid #e2e7f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .chart-card h3 {
   margin: 0 0 12px;
   font-size: 15px;
-  color: #c3cad8;
+  color: #3a4358;
 }
 
 @media (max-width: 720px) {
@@ -211,13 +217,14 @@ body {
 }
 
 .job-card {
-  background: #161c2b;
-  border: 1px solid #232a3a;
+  background: #ffffff;
+  border: 1px solid #e2e7f0;
   border-radius: 10px;
   padding: 14px;
   animation: fadeIn 0.3s ease;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 @keyframes fadeIn {
@@ -244,6 +251,7 @@ body {
   font-size: 15px;
   line-height: 1.3;
   flex: 1;
+  color: #1a2233;
 }
 
 .job-source {
@@ -255,19 +263,19 @@ body {
 }
 
 .job-company {
-  color: #c3cad8;
+  color: #3a4358;
   font-size: 14px;
   margin-top: 4px;
 }
 
 .job-meta {
-  color: #8a93a6;
+  color: #6b7488;
   font-size: 13px;
   margin-top: 6px;
 }
 
 .empty {
-  color: #8a93a6;
+  color: #6b7488;
   grid-column: 1 / -1;
   text-align: center;
   padding: 30px;
@@ -275,7 +283,7 @@ body {
 
 /* JOB NUMBER + APPLY BUTTON */
 .job-num {
-  color: #5a647a;
+  color: #9aa3b5;
   font-size: 12px;
   font-weight: 600;
   margin-right: 4px;
@@ -287,7 +295,7 @@ body {
 
 .apply-btn {
   display: inline-block;
-  background: #4f8cff;
+  background: #2563eb;
   color: #fff;
   text-decoration: none;
   padding: 6px 16px;
@@ -297,11 +305,11 @@ body {
 }
 
 .apply-btn:hover {
-  background: #3a78f0;
+  background: #1d4ed8;
 }
 
 .apply-btn.disabled {
-  background: #2a3344;
-  color: #5a647a;
+  background: #e2e7f0;
+  color: #9aa3b5;
   cursor: default;
 }
