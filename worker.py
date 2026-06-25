@@ -94,12 +94,16 @@ def main():
     ch.basic_qos(prefetch_count=1)
     ch.basic_consume(queue=TASK_QUEUE, on_message_callback=process_task)
 
-    print(f"[{WORKER_ID}] Waiting for tasks. Press CTRL+C to exit.")
+    print(f"[{WORKER_ID}] Waiting for tasks. Press CTRL+C to exit.", flush=True)
     try:
         ch.start_consuming()
     except KeyboardInterrupt:
-        print(f"[{WORKER_ID}] Shutting down.")
+        print(f"[{WORKER_ID}] Shutting down.", flush=True)
         ch.stop_consuming()
+    except Exception as e:
+        import traceback
+        print(f"[{WORKER_ID}] CONSUME LOOP ERROR: {e}", flush=True)
+        traceback.print_exc()
     conn.close()
 
 
