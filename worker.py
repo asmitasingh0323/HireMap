@@ -7,12 +7,10 @@ import pika
 from dotenv import load_dotenv
 from fetchers import FETCHERS
 from db_utils import save_jobs, record_task_status
+from connections import get_rabbit_connection
 
 load_dotenv()
 
-RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
-RABBIT_USER = os.getenv("RABBIT_USER", "hiremap")
-RABBIT_PASS = os.getenv("RABBIT_PASS", "hiremap_pass")
 TASK_QUEUE = "task_queue"
 
 # Each worker gets an ID so we can see which one did what
@@ -20,10 +18,7 @@ WORKER_ID = sys.argv[1] if len(sys.argv) > 1 else f"worker-{os.getpid()}"
 
 
 def connect():
-    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=int(os.getenv("RABBIT_PORT", 5672)), credentials=creds, heartbeat=600)
-    return pika.BlockingConnection(params)
+    return get_rabbit_connection()
 
 
 HEARTBEAT_QUEUE = "heartbeat_queue"
@@ -32,11 +27,7 @@ HEARTBEAT_INTERVAL = 3  # seconds between heartbeats
 
 def start_heartbeat():
     """Background thread: publishes a heartbeat for this worker every few seconds."""
-    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=int(os.getenv("RABBIT_PORT", 5672)), credentials=creds
-    )
-    conn = pika.BlockingConnection(params)
+    conn = get_rabbit_connection()
     ch = conn.channel()
     ch.queue_declare(queue=HEARTBEAT_QUEUE, durable=True)
     while True:

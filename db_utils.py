@@ -1,17 +1,9 @@
 import os
 import hashlib
-import psycopg2
 from dotenv import load_dotenv
+from connections import get_db_connection
 
 load_dotenv()
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-}
 
 
 def make_fingerprint(title, company, location):
@@ -23,7 +15,7 @@ def make_fingerprint(title, company, location):
 def save_jobs(jobs, search_id):
     """Insert jobs into Postgres. ON CONFLICT updates search_id so the latest
     search that matched a job can find it. Returns (inserted_count, skipped_count)."""
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cur = conn.cursor()
     inserted = 0
     for j in jobs:
@@ -47,7 +39,7 @@ def save_jobs(jobs, search_id):
 
 def record_task_status(search_id, source, worker_id, fetched, inserted):
     """Record that a worker finished a (search_id, source) task. Idempotent."""
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO task_status (search_id, source, worker_id, fetched, inserted)

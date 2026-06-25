@@ -12,22 +12,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
+from connections import get_db_connection, get_rabbit_connection
 
 load_dotenv()
 
-RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
-RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5672))
-RABBIT_USER = os.getenv("RABBIT_USER", "hiremap")
-RABBIT_PASS = os.getenv("RABBIT_PASS", "hiremap_pass")
 TASK_QUEUE = "task_queue"
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-}
 
 SOURCES = ["adzuna", "remoteok", "weworkremotely"]
 
@@ -52,10 +41,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 
 def publish_tasks(keyword, location, search_id, deadline_ts):
-    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=RABBIT_PORT, credentials=creds)
-    conn = pika.BlockingConnection(params)
+    conn = get_rabbit_connection()
     ch = conn.channel()
     ch.queue_declare(queue=TASK_QUEUE, durable=True)
     for source in SOURCES:
@@ -71,7 +57,7 @@ def publish_tasks(keyword, location, search_id, deadline_ts):
 
 
 def fetch_results_for_source(search_id, source):
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
@@ -85,7 +71,7 @@ def fetch_results_for_source(search_id, source):
 
 
 def fetch_all_results(search_id):
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
@@ -99,7 +85,7 @@ def fetch_all_results(search_id):
 
 
 def get_completed_sources(search_id):
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
         "SELECT source FROM task_status WHERE search_id = %s", (search_id,))

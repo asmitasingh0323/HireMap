@@ -6,13 +6,10 @@ import threading
 import subprocess
 import pika
 from dotenv import load_dotenv
+from connections import get_rabbit_connection
 
 load_dotenv()
 
-RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
-RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5672))
-RABBIT_USER = os.getenv("RABBIT_USER", "hiremap")
-RABBIT_PASS = os.getenv("RABBIT_PASS", "hiremap_pass")
 HEARTBEAT_QUEUE = "heartbeat_queue"
 
 # Tuning knobs
@@ -27,10 +24,7 @@ respawn_count = 0
 
 
 def connect():
-    creds = pika.PlainCredentials(RABBIT_USER, RABBIT_PASS)
-    params = pika.ConnectionParameters(
-        host=RABBIT_HOST, port=RABBIT_PORT, credentials=creds)
-    return pika.BlockingConnection(params)
+    return get_rabbit_connection()
 
 
 def consume_heartbeats():
