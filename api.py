@@ -14,6 +14,7 @@ from flask_socketio import SocketIO
 from dotenv import load_dotenv
 from connections import get_db_connection, get_rabbit_connection
 from adapters import all_sources
+from db_utils import ensure_schema
 
 load_dotenv()
 
@@ -173,6 +174,7 @@ def on_connect():
 
 
 if __name__ == "__main__":
+    ensure_schema()
     port = int(os.getenv("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port,
                  debug=False, allow_unsafe_werkzeug=True)

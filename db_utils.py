@@ -6,6 +6,27 @@ from connections import get_db_connection
 load_dotenv()
 
 
+# Columns added after the tables were first created. Every database
+# (local Docker or online) gets them automatically when a service starts,
+# so the code and the database can't drift apart.
+SCHEMA_UPDATES = [
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS url TEXT",
+    "ALTER TABLE task_status ADD COLUMN IF NOT EXISTS error TEXT",
+]
+
+
+def ensure_schema():
+    """Apply SCHEMA_UPDATES. Safe to run every time (IF NOT EXISTS)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    for statement in SCHEMA_UPDATES:
+        cur.execute(statement)
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("[db] schema is up to date", flush=True)
+
+
 def make_fingerprint(title, company, location):
     """Deterministic dedup key from title + company + location."""
     raw = f"{(title or '').strip().lower()}|{(company or '').strip().lower()}|{(location or '').strip().lower()}"

@@ -5,7 +5,7 @@ import time
 import threading
 import pika
 from dotenv import load_dotenv
-from db_utils import save_jobs, record_task_status
+from db_utils import save_jobs, record_task_status, ensure_schema
 from connections import get_rabbit_connection
 from adapters import get_adapter
 
@@ -88,6 +88,9 @@ def process_task(ch, method, properties, body):
 
 
 def main():
+    # Make sure the database has every column this code writes to
+    ensure_schema()
+
     # Skip heartbeat in the cloud (no local monitor there; saves a RabbitMQ connection)
     if os.getenv("ENABLE_HEARTBEAT", "true").lower() == "true":
         hb_thread = threading.Thread(target=start_heartbeat, daemon=True)
