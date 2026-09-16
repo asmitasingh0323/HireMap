@@ -1,7 +1,11 @@
 import { io } from "socket.io-client";
 
-// The Flask API base URL
-export const API_BASE = "https://hiremap-ffey.onrender.com";
+// The Flask API base URL.
+// "npm run dev" (on your computer)  -> uses your local backend
+// "npm run build" (deployed online) -> uses the Render backend
+export const API_BASE = import.meta.env.DEV
+    ? "http://localhost:5000"
+    : "https://hiremap-ffey.onrender.com";
 
 // One shared socket connection to the API for live streaming
 export const socket = io(API_BASE, {

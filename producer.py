@@ -1,3 +1,4 @@
+from adapters import all_sources
 import os
 import json
 import uuid
@@ -11,7 +12,7 @@ RABBIT_USER = os.getenv("RABBIT_USER", "hiremap")
 RABBIT_PASS = os.getenv("RABBIT_PASS", "hiremap_pass")
 TASK_QUEUE = "task_queue"
 
-SOURCES = ["adzuna", "remoteok", "weworkremotely"]
+SOURCES = all_sources()
 
 
 def publish_tasks(keyword, location):

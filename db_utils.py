@@ -37,19 +37,21 @@ def save_jobs(jobs, search_id):
     return inserted, skipped
 
 
-def record_task_status(search_id, source, worker_id, fetched, inserted):
-    """Record that a worker finished a (search_id, source) task. Idempotent."""
+def record_task_status(search_id, source, worker_id, fetched, inserted, error=None):
+    """Record that a worker finished a (search_id, source) task, even if it failed.
+    error is None on success, or a short message on failure. Idempotent."""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO task_status (search_id, source, worker_id, fetched, inserted)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO task_status (search_id, source, worker_id, fetched, inserted, error)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (search_id, source) DO UPDATE
         SET worker_id = EXCLUDED.worker_id,
             fetched = EXCLUDED.fetched,
             inserted = EXCLUDED.inserted,
+            error = EXCLUDED.error,
             finished_at = NOW()
-    """, (search_id, source, worker_id, fetched, inserted))
+    """, (search_id, source, worker_id, fetched, inserted, error))
     conn.commit()
     cur.close()
     conn.close()

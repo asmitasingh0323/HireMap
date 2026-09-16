@@ -5,9 +5,9 @@ import time
 import threading
 import pika
 from dotenv import load_dotenv
-from fetchers import FETCHERS
 from db_utils import save_jobs, record_task_status
 from connections import get_rabbit_connection
+from adapters import get_adapter
 
 load_dotenv()
 
@@ -53,13 +53,13 @@ def process_task(ch, method, properties, body):
     start = time.time()
 
     try:
-        fetch_fn = FETCHERS.get(source)
-        if not fetch_fn:
+        adapter = get_adapter(source)
+        if not adapter:
             print(f"[{WORKER_ID}] Unknown source '{source}', discarding task.")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        jobs = fetch_fn(keyword=keyword, location=location)
+        jobs = adapter.fetch(keyword=keyword, location=location)
         inserted, skipped = save_jobs(jobs, search_id)
         duration = round(time.time() - start, 2)
         print(f"[{WORKER_ID}] DONE source={source}: fetched={len(jobs)}, "
@@ -73,8 +73,17 @@ def process_task(ch, method, properties, body):
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Exception as e:
-        print(f"[{WORKER_ID}] ERROR on source={source}: {e}")
-        # ACK gracefully so a failing source doesn't requeue forever (per your report 4)
+        # Keep only the first part of the message; the URL part contains API keys
+        short_error = str(e).split(" for url:")[0]
+        print(f"[{WORKER_ID}] ERROR on source={source}: {short_error}")
+        # Still mark this source as finished (with the error) so the API
+        # doesn't wait for it until the deadline.
+        try:
+            record_task_status(search_id, source, WORKER_ID,
+                               0, 0, error=short_error)
+        except Exception as db_err:
+            print(f"[{WORKER_ID}] could not record failure: {db_err}")
+        # ACK so a failing source doesn't requeue forever
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
 

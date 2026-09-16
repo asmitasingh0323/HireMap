@@ -13,12 +13,13 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 from connections import get_db_connection, get_rabbit_connection
+from adapters import all_sources
 
 load_dotenv()
 
 TASK_QUEUE = "task_queue"
 
-SOURCES = ["adzuna", "remoteok", "weworkremotely"]
+SOURCES = all_sources()
 
 
 def jsonable(rows):
@@ -95,18 +96,18 @@ def get_completed_sources(search_id):
     return done
 
 
-def jsonable(rows):
-    """Convert DB rows into JSON-safe dicts (dates -> strings, Decimals -> floats)."""
-    clean = []
-    for r in rows:
-        d = dict(r)
-        for k, v in d.items():
-            if isinstance(v, (datetime.date, datetime.datetime)):
-                d[k] = v.isoformat()
-            elif isinstance(v, Decimal):
-                d[k] = float(v)
-        clean.append(d)
-    return clean
+# def jsonable(rows):
+#     """Convert DB rows into JSON-safe dicts (dates -> strings, Decimals -> floats)."""
+#     clean = []
+#     for r in rows:
+#         d = dict(r)
+#         for k, v in d.items():
+#             if isinstance(v, (datetime.date, datetime.datetime)):
+#                 d[k] = v.isoformat()
+#             elif isinstance(v, Decimal):
+#                 d[k] = float(v)
+#         clean.append(d)
+#     return clean
 
 
 def run_search(keyword, location, deadline_seconds, search_id):

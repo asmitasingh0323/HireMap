@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS task_status (
     fetched     INTEGER DEFAULT 0,
     inserted    INTEGER DEFAULT 0,
     finished_at TIMESTAMP DEFAULT NOW(),
+    error       TEXT,
     UNIQUE (search_id, source)
 );
 
