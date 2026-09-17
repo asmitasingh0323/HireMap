@@ -4,6 +4,9 @@ Every source (Adzuna, RemoteOK, ...) is one file in this folder
 containing one class that inherits from SourceAdapter.
 Subclasses are registered automatically - no central list to edit.
 """
+import re
+import unicodedata
+
 
 REGISTRY = {}  # source name -> adapter instance
 
@@ -22,8 +25,23 @@ class SourceAdapter:
         REGISTRY[cls.name] = cls()
 
     def fetch(self, keyword=None, location=None):
-        """Return a list of normalized job dicts (same shape as before)."""
+        """Return a list of job dicts. Written per source; never called directly
+        by the workers, which call collect() so normalization always happens."""
         raise NotImplementedError
+
+    def collect(self, keyword=None, location=None):
+        """What the rest of the system calls: fetch, then normalize.
+
+        Jobs without a title are dropped, because a job with no title cannot
+        be deduplicated or shown.
+        """
+        jobs = self.fetch(keyword=keyword, location=location)
+        cleaned = []
+        for job in jobs:
+            normalized = normalize_job(job, self.name)
+            if normalized["title"]:
+                cleaned.append(normalized)
+        return cleaned
 
 
 def get_adapter(name):
@@ -46,3 +64,94 @@ def matches_keyword(keyword, *texts):
         return True
     haystack = " ".join(t for t in texts if t).lower()
     return all(word in haystack for word in keyword.lower().split())
+
+
+# ---------------------------------------------------------------------------
+# Normalization: sources disagree about fields, so everything they return is
+# cleaned here before it reaches the database. One place, all sources.
+# ---------------------------------------------------------------------------
+
+# Every job saved must have exactly these keys.
+JOB_FIELDS = [
+    "title", "company", "location", "skills", "salary_min", "salary_max",
+    "job_type", "experience_level", "posted_date", "source", "url",
+    "fingerprint",
+]
+
+# Different words for "this job is remote"
+REMOTE_WORDS = {
+    "", "anywhere", "worldwide", "remote", "fully remote", "100% remote",
+    "anywhere in the world", "remote worldwide", "global",
+}
+
+
+def clean_text(value):
+    """Tidy a text field: fix odd characters, collapse spaces, blank -> None."""
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(value))
+    # Mojibake from feeds that were encoded twice
+    for bad, good in (("\u00e2\u20ac\u2122", "'"), ("\u00e2\u20ac\u0153", '"'),
+                      ("\u00e2\u20ac\u009d", '"'), ("\u00e2\u20ac\u201c", "-"),
+                      ("\u00c2\u00a0", " ")):
+        text = text.replace(bad, good)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def clean_location(value):
+    """Tidy a location and use one word, 'Remote', for all the remote spellings."""
+    text = clean_text(value)
+    if text is None or text.lower().strip(" .") in REMOTE_WORDS:
+        return "Remote"
+    # "Remote - Seattle, WA" / "Remote, US" -> "Seattle, WA" / "US"
+    text = re.sub(r"^remote\s*[-,:]\s*", "", text, flags=re.IGNORECASE)
+    return text or "Remote"
+
+
+def clean_salary(value):
+    """Turn whatever a source sends (number, '$120,000', '120k') into a number."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    text = str(value).lower().replace(",", "").strip()
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(k?)", text)
+    if not match:
+        return None
+    number = float(match.group(1))
+    if match.group(2) == "k":
+        number *= 1000
+    return number if number > 0 else None
+
+
+def normalize_job(job, source):
+    """Clean one job dict and guarantee every field in JOB_FIELDS exists.
+
+    The fingerprint is recomputed from the CLEANED title/company/location, so
+    the same role from two sources still produces the same fingerprint and
+    deduplication keeps working.
+    """
+    from db_utils import make_fingerprint   # imported here to avoid a cycle
+
+    clean = {field: job.get(field) for field in JOB_FIELDS}
+    clean["title"] = clean_text(clean["title"])
+    clean["company"] = clean_text(clean["company"])
+    clean["location"] = clean_location(clean["location"])
+    clean["skills"] = clean_text(clean["skills"])
+    clean["job_type"] = (clean_text(clean["job_type"]) or "").lower() or None
+    clean["experience_level"] = clean_text(clean["experience_level"])
+    clean["url"] = clean_text(clean["url"])
+    clean["source"] = source
+
+    clean["salary_min"] = clean_salary(clean["salary_min"])
+    clean["salary_max"] = clean_salary(clean["salary_max"])
+    if (clean["salary_min"] and clean["salary_max"]
+            and clean["salary_min"] > clean["salary_max"]):
+        clean["salary_min"], clean["salary_max"] = (
+            clean["salary_max"], clean["salary_min"])
+
+    clean["fingerprint"] = make_fingerprint(
+        clean["title"], clean["company"], clean["location"])
+    return clean
+
