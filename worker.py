@@ -59,7 +59,8 @@ def process_task(ch, method, properties, body):
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        jobs = adapter.fetch(keyword=keyword, location=location)
+        # collect() = fetch from the source, then normalize the fields
+        jobs = adapter.collect(keyword=keyword, location=location)
         inserted, skipped = save_jobs(jobs, search_id)
         duration = round(time.time() - start, 2)
         print(f"[{WORKER_ID}] DONE source={source}: fetched={len(jobs)}, "

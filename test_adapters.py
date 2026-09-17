@@ -5,7 +5,7 @@ from adapters import get_adapter, all_sources
 print("Registered sources:", all_sources())
 for s in all_sources():
     try:
-        jobs = get_adapter(s).fetch(keyword="python")
+        jobs = get_adapter(s).collect(keyword="python")
         print(f"  {s} -> OK, {len(jobs)} jobs")
     except Exception as e:
         print(f"  {s} -> FAILED: {e}")
