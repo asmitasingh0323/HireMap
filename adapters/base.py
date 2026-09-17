@@ -32,3 +32,17 @@ def get_adapter(name):
 
 def all_sources():
     return [name for name, a in REGISTRY.items() if a.enabled]
+
+
+def matches_keyword(keyword, *texts):
+    """True if EVERY word of the keyword appears somewhere in texts.
+
+    Feeds that return one global list (RemoteOK, Remotive) have to be
+    filtered here. Matching every word instead of the exact phrase means a
+    search for "python developer" also finds "Senior Python Engineer"
+    tagged "developer". An empty keyword matches everything.
+    """
+    if not keyword:
+        return True
+    haystack = " ".join(t for t in texts if t).lower()
+    return all(word in haystack for word in keyword.lower().split())

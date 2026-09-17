@@ -1,6 +1,6 @@
 import requests
 from db_utils import make_fingerprint
-from adapters.base import SourceAdapter
+from adapters.base import SourceAdapter, matches_keyword
 
 
 class RemoteOKAdapter(SourceAdapter):
@@ -22,10 +22,8 @@ class RemoteOKAdapter(SourceAdapter):
             loc = item.get("location") or "Remote"
             tags = item.get("tags", []) or []
             skills = ", ".join(tags) if tags else None
-            if keyword:
-                haystack = (title or "").lower() + " " + " ".join(tags).lower()
-                if keyword.lower() not in haystack:
-                    continue
+            if not matches_keyword(keyword, title, " ".join(tags)):
+                continue
             jobs.append({
                 "title": title, "company": company, "location": loc, "skills": skills,
                 "salary_min": item.get("salary_min"), "salary_max": item.get("salary_max"),
