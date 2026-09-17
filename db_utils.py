@@ -15,10 +15,20 @@ SCHEMA_UPDATES = [
 ]
 
 
+# SQL files that create the tables (they use CREATE TABLE IF NOT EXISTS)
+SCHEMA_FILES = ["schema.sql", "schema_status.sql"]
+
+
 def ensure_schema():
-    """Apply SCHEMA_UPDATES. Safe to run every time (IF NOT EXISTS)."""
+    """Create any missing tables, then apply SCHEMA_UPDATES.
+    Safe to run every time (IF NOT EXISTS), so a brand-new empty
+    database is set up automatically."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     conn = get_db_connection()
     cur = conn.cursor()
+    for filename in SCHEMA_FILES:
+        with open(os.path.join(base_dir, filename), encoding="utf-8") as f:
+            cur.execute(f.read())
     for statement in SCHEMA_UPDATES:
         cur.execute(statement)
     conn.commit()
