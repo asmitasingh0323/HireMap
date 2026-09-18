@@ -41,6 +41,10 @@ CRAWLS = [
 # A source's own rate limit can stretch this, never shrink it.
 CRAWL_INTERVAL_MINUTES = int(os.getenv("CRAWL_INTERVAL_MINUTES", "15"))
 
+# How often to re-check which stored listings are still live. Cheap (no
+# requests to any site), so it can run on its own gentle schedule.
+FRESHNESS_INTERVAL_MINUTES = int(os.getenv("FRESHNESS_INTERVAL_MINUTES", "60"))
+
 
 def seconds_between_crawls(source):
     """Smallest safe gap between two crawls of this source, in seconds.
@@ -80,6 +84,22 @@ def publish_crawl(source):
           f"(search_id={search_id})", flush=True)
 
 
+def publish_freshness(source):
+    """Ask a worker to retire this source's listings that stopped appearing."""
+    search_id = f"fresh-{uuid.uuid4().hex[:8]}"
+    conn = get_rabbit_connection()
+    ch = conn.channel()
+    ch.queue_declare(queue=TASK_QUEUE, durable=True)
+    task = {"source": source, "search_id": search_id, "type": "freshness"}
+    ch.basic_publish(
+        exchange="", routing_key=TASK_QUEUE, body=json.dumps(task),
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+    conn.close()
+    print(f"[scheduler] published freshness check for {source} "
+          f"(search_id={search_id})", flush=True)
+
+
 def main():
     sources = all_sources()
     if not sources:
@@ -91,6 +111,9 @@ def main():
     if run_once:
         for source in sources:
             publish_crawl(source)
+        if "--freshness" in sys.argv:
+            for source in sources:
+                publish_freshness(source)
         print("[scheduler] one round published, exiting.")
         return
 
@@ -109,6 +132,17 @@ def main():
         print(f"[scheduler] {source}: every {gap / 60:.1f} min "
               f"({len(CRAWLS)} search(es) per crawl), first run at "
               f"{first_run.strftime('%H:%M:%S')}")
+
+    # Freshness checks: one per source, spread out, on their own interval
+    for position, source in enumerate(sources):
+        scheduler.add_job(
+            publish_freshness, "interval",
+            seconds=FRESHNESS_INTERVAL_MINUTES * 60, args=[source],
+            id=f"fresh-{source}", max_instances=1, coalesce=True,
+            next_run_time=datetime.now() + timedelta(seconds=30 + 5 * position),
+        )
+    print(f"[scheduler] freshness checks: every "
+          f"{FRESHNESS_INTERVAL_MINUTES} min per source")
 
     print("[scheduler] started. Press CTRL+C to stop.", flush=True)
     scheduler.start()

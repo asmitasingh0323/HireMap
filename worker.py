@@ -5,7 +5,8 @@ import time
 import threading
 import pika
 from dotenv import load_dotenv
-from db_utils import save_jobs, record_task_status, ensure_schema
+from db_utils import (save_jobs, record_task_status, ensure_schema,
+                      expire_stale_jobs)
 from connections import get_rabbit_connection
 from adapters import get_adapter
 
@@ -49,10 +50,24 @@ def process_task(ch, method, properties, body):
     location = task.get("location")
     search_id = task.get("search_id", "manual")
 
-    print(f"[{WORKER_ID}] Received task: source={source}, keyword={keyword}, location={location}")
+    task_type = task.get("type", "crawl")
+    print(f"[{WORKER_ID}] Received {task_type} task: source={source}, "
+          f"keyword={keyword}, location={location}")
     start = time.time()
 
     try:
+        if task_type == "freshness":
+            # Freshness check: no fetching, just retire listings this source
+            # has stopped showing in its crawls.
+            expired = expire_stale_jobs(source=source)
+            duration = round(time.time() - start, 2)
+            print(f"[{WORKER_ID}] DONE freshness source={source}: "
+                  f"expired={expired}, time={duration}s")
+            record_task_status(search_id, f"{source}-freshness", WORKER_ID,
+                               0, expired)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         adapter = get_adapter(source)
         if not adapter:
             print(f"[{WORKER_ID}] Unknown source '{source}', discarding task.")
