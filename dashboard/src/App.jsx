@@ -9,7 +9,24 @@ const SOURCE_COLORS = {
   adzuna: "#4f8cff",
   remoteok: "#22c55e",
   weworkremotely: "#f59e0b",
+  remotive: "#a855f7",
+  arbeitnow: "#ef4444",
+  greenhouse: "#0ea5e9",
 };
+
+// The API only returns listings that are still live, so a card can honestly
+// say "still active". We prefer the source's own posting date and fall back
+// to when this crawler first saw the listing.
+function freshnessLabel(job) {
+  const posted = job.posted_date || job.first_seen;
+  if (!posted) return "still active";
+  const days = Math.floor((Date.now() - new Date(posted).getTime()) / 86400000);
+  if (isNaN(days) || days < 0) return "still active";
+  const word = job.posted_date ? "posted" : "seen";
+  if (days === 0) return `${word} today \u00b7 still active`;
+  if (days === 1) return `${word} 1 day ago \u00b7 still active`;
+  return `${word} ${days} days ago \u00b7 still active`;
+}
 
 export default function App() {
   const [keyword, setKeyword] = useState("python developer");
@@ -189,6 +206,11 @@ export default function App() {
               </span>
             </div>
             <div className="job-company">{j.company || "Unknown company"}</div>
+            <div className="job-fresh" style={{
+              fontSize: "0.8rem", color: "#15803d", margin: "2px 0",
+            }}>
+              ● {freshnessLabel(j)}
+            </div>
             <div className="job-meta">
               {j.location || "—"}
               {j.salary_min ? ` · $${Math.round(j.salary_min).toLocaleString()}+` : ""}

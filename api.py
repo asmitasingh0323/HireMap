@@ -63,8 +63,10 @@ def fetch_results_for_source(search_id, source):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
-               job_type, experience_level, posted_date, source, url
-        FROM jobs WHERE search_id = %s AND source = %s
+               job_type, experience_level, posted_date, source, url,
+               status, first_seen, last_seen
+        FROM jobs
+        WHERE search_id = %s AND source = %s AND status = 'active'
     """, (search_id, source))
     rows = cur.fetchall()
     cur.close()
@@ -77,8 +79,11 @@ def fetch_all_results(search_id):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
-               job_type, experience_level, posted_date, source, url
-        FROM jobs WHERE search_id = %s ORDER BY source
+               job_type, experience_level, posted_date, source, url,
+               status, first_seen, last_seen
+        FROM jobs
+        WHERE search_id = %s AND status = 'active'
+        ORDER BY source
     """, (search_id,))
     rows = cur.fetchall()
     cur.close()
