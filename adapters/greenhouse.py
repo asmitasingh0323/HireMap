@@ -44,7 +44,9 @@ class GreenhouseAdapter(SourceAdapter):
             taken_here = 0
             url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
             try:
-                resp = requests.get(url, headers=headers, timeout=15)
+                # content=true asks Greenhouse for the full job description
+                resp = requests.get(url, headers=headers, timeout=20,
+                                    params={"content": "true"})
                 resp.raise_for_status()
                 board = resp.json()
             except Exception as e:
@@ -73,6 +75,7 @@ class GreenhouseAdapter(SourceAdapter):
                     "posted_date": (item.get("updated_at") or "")[:10] or None,
                     "source": "greenhouse",
                     "url": item.get("absolute_url"),
+                    "description": item.get("content"),
                 })
                 taken_here += 1
                 if len(jobs) >= max_results:

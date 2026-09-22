@@ -41,5 +41,6 @@ class RemotiveAdapter(SourceAdapter):
                 "source": "remotive",
                 "fingerprint": make_fingerprint(title, company, loc),
                 "url": item.get("url"),
+                "description": item.get("description"),
             })
         return jobs

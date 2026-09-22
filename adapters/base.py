@@ -4,6 +4,7 @@ Every source (Adzuna, RemoteOK, ...) is one file in this folder
 containing one class that inherits from SourceAdapter.
 Subclasses are registered automatically - no central list to edit.
 """
+import html
 import re
 import unicodedata
 
@@ -75,8 +76,12 @@ def matches_keyword(keyword, *texts):
 JOB_FIELDS = [
     "title", "company", "location", "skills", "salary_min", "salary_max",
     "job_type", "experience_level", "posted_date", "source", "url",
-    "fingerprint",
+    "description", "fingerprint",
 ]
+
+# Longest description we keep. Enough for a model to read, small enough
+# that the database and the prompts stay manageable.
+MAX_DESCRIPTION_CHARS = 6000
 
 # Different words for "this job is remote"
 REMOTE_WORDS = {
@@ -142,6 +147,7 @@ def normalize_job(job, source):
     clean["job_type"] = (clean_text(clean["job_type"]) or "").lower() or None
     clean["experience_level"] = clean_text(clean["experience_level"])
     clean["url"] = clean_text(clean["url"])
+    clean["description"] = clean_description(clean["description"])
     clean["source"] = source
 
     clean["salary_min"] = clean_salary(clean["salary_min"])
@@ -155,3 +161,22 @@ def normalize_job(job, source):
         clean["title"], clean["company"], clean["location"])
     return clean
 
+
+def clean_description(value):
+    """Turn a job description (often HTML) into plain readable text.
+
+    Sources send HTML, escaped HTML or plain text. The interpretation worker
+    reads this text, so tags and entities are stripped and the result is
+    capped at MAX_DESCRIPTION_CHARS.
+    """
+    if not value:
+        return None
+    text = html.unescape(str(value))
+    text = re.sub(r"<br\s*/?>|</p>|</li>|</div>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)          # drop remaining tags
+    text = html.unescape(text)                     # entities inside tags
+    text = re.sub(r"[ \t\u00a0]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+    if not text:
+        return None
+    return text[:MAX_DESCRIPTION_CHARS]

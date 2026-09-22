@@ -31,5 +31,6 @@ class RemoteOKAdapter(SourceAdapter):
                 "posted_date": (item.get("date") or "")[:10] or None,
                 "source": "remoteok", "fingerprint": make_fingerprint(title, company, loc),
                 "url": item.get("url") or item.get("apply_url"),
+                "description": item.get("description"),
             })
         return jobs

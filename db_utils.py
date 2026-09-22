@@ -1,5 +1,6 @@
 import os
 import hashlib
+import psycopg2.extras
 from dotenv import load_dotenv
 from connections import get_db_connection
 
@@ -19,6 +20,14 @@ SCHEMA_UPDATES = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'",
     "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_last_seen ON jobs(last_seen)",
+    # Raw text the interpretation worker reads (phase 2, weeks 9-10)
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS description TEXT",
+    # What the model pulled out of the description (phase 2, weeks 9-10)
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS extracted_skills TEXT",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS seniority TEXT",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS work_arrangement TEXT",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interpreted_at TIMESTAMP",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interpretation_model TEXT",
 ]
 
 
@@ -62,12 +71,15 @@ def save_jobs(jobs, search_id):
     for j in jobs:
         cur.execute("""
             INSERT INTO jobs (title, company, location, skills, salary_min, salary_max,
-                              job_type, experience_level, posted_date, source, fingerprint, search_id, url)
+                              job_type, experience_level, posted_date, source, fingerprint, search_id,
+                              url, description)
             VALUES (%(title)s, %(company)s, %(location)s, %(skills)s, %(salary_min)s, %(salary_max)s,
-                    %(job_type)s, %(experience_level)s, %(posted_date)s, %(source)s, %(fingerprint)s, %(search_id)s, %(url)s)
+                    %(job_type)s, %(experience_level)s, %(posted_date)s, %(source)s, %(fingerprint)s,
+                    %(search_id)s, %(url)s, %(description)s)
             ON CONFLICT (fingerprint) DO UPDATE
                 SET search_id = EXCLUDED.search_id,
                     url = COALESCE(EXCLUDED.url, jobs.url),
+                    description = COALESCE(EXCLUDED.description, jobs.description),
                     last_seen = NOW(),
                     status = 'active'    -- it showed up again, so it is live
             RETURNING (xmax = 0) AS is_new
@@ -146,6 +158,73 @@ def freshness_summary():
         SELECT source, status, COUNT(*),
                MIN(first_seen)::date, MAX(last_seen)
         FROM jobs GROUP BY source, status ORDER BY source, status
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Interpretation (phase 2, weeks 9-10)
+# ---------------------------------------------------------------------------
+
+def jobs_needing_interpretation(limit=10, source=None):
+    """Active jobs that have a description but have not been interpreted yet.
+
+    Newest first, so the freshest postings are decoded before older ones.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    sql = """
+        SELECT fingerprint, title, company, location, source, description
+        FROM jobs
+        WHERE status = 'active'
+          AND description IS NOT NULL
+          AND interpreted_at IS NULL
+    """
+    params = []
+    if source:
+        sql += " AND source = %s"
+        params.append(source)
+    sql += " ORDER BY last_seen DESC LIMIT %s"
+    params.append(limit)
+    cur.execute(sql, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return rows
+
+
+def save_interpretation(fingerprint, skills, seniority, work_arrangement, model):
+    """Store what the model found, next to the original job."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE jobs
+        SET extracted_skills = %s,
+            seniority = %s,
+            work_arrangement = %s,
+            interpreted_at = NOW(),
+            interpretation_model = %s
+        WHERE fingerprint = %s
+    """, (", ".join(skills) if skills else None, seniority,
+          work_arrangement, model, fingerprint))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def interpretation_summary():
+    """How much of the active data has been decoded, per source."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT source,
+               COUNT(*) FILTER (WHERE description IS NOT NULL) AS with_text,
+               COUNT(interpreted_at) AS interpreted
+        FROM jobs WHERE status = 'active'
+        GROUP BY source ORDER BY source
     """)
     rows = cur.fetchall()
     cur.close()

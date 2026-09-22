@@ -34,5 +34,7 @@ class AdzunaAdapter(SourceAdapter):
                 "posted_date": (item.get("created") or "")[:10] or None,
                 "source": "adzuna", "fingerprint": make_fingerprint(title, company, loc),
                 "url": item.get("redirect_url"),
+                # Adzuna returns a short teaser, not the full posting
+                "description": item.get("description"),
             })
         return jobs

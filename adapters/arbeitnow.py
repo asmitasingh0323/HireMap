@@ -51,6 +51,7 @@ class ArbeitnowAdapter(SourceAdapter):
                 "source": "arbeitnow",
                 "fingerprint": make_fingerprint(title, company, loc),
                 "url": item.get("url"),
+                "description": item.get("description"),
             })
             if len(jobs) >= max_results:
                 break
