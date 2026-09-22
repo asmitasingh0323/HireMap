@@ -6,7 +6,9 @@ import threading
 import pika
 from dotenv import load_dotenv
 from db_utils import (save_jobs, record_task_status, ensure_schema,
-                      expire_stale_jobs)
+                      expire_stale_jobs, jobs_needing_interpretation,
+                      save_interpretation)
+from interpreter import interpret_job, ModelError, model_is_available
 from connections import get_rabbit_connection
 from adapters import get_adapter
 
@@ -65,6 +67,32 @@ def process_task(ch, method, properties, body):
                   f"expired={expired}, time={duration}s")
             record_task_status(search_id, f"{source}-freshness", WORKER_ID,
                                0, expired)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if task_type == "interpret":
+            # Interpretation: no fetching either. Take jobs that have a
+            # description but no decoded fields, and run the model on them.
+            batch = int(task.get("batch", 5))
+            jobs = jobs_needing_interpretation(limit=batch, source=source)
+            done = failed = 0
+            for job in jobs:
+                try:
+                    result = interpret_job(job)
+                    save_interpretation(
+                        job["fingerprint"], result["skills"],
+                        result["seniority"], result["work_arrangement"],
+                        result["model"])
+                    done += 1
+                except ModelError as e:
+                    # A job the model cannot read must not stop the batch.
+                    print(f"[{WORKER_ID}]   skipped '{job['title']}': {e}")
+                    failed += 1
+            duration = round(time.time() - start, 2)
+            print(f"[{WORKER_ID}] DONE interpret source={source}: "
+                  f"interpreted={done}, failed={failed}, time={duration}s")
+            record_task_status(search_id, f"{source}-interpret", WORKER_ID,
+                               len(jobs), done)
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 

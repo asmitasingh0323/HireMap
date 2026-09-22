@@ -45,6 +45,12 @@ CRAWL_INTERVAL_MINUTES = int(os.getenv("CRAWL_INTERVAL_MINUTES", "15"))
 # requests to any site), so it can run on its own gentle schedule.
 FRESHNESS_INTERVAL_MINUTES = int(os.getenv("FRESHNESS_INTERVAL_MINUTES", "60"))
 
+# How often to hand new postings to the model, and how many per task.
+# Interpretation is slow on a laptop, so keep batches small and steady:
+# postings are decoded as they arrive rather than all at once.
+INTERPRET_INTERVAL_MINUTES = int(os.getenv("INTERPRET_INTERVAL_MINUTES", "5"))
+INTERPRET_BATCH = int(os.getenv("INTERPRET_BATCH", "5"))
+
 
 def seconds_between_crawls(source):
     """Smallest safe gap between two crawls of this source, in seconds.
@@ -100,6 +106,23 @@ def publish_freshness(source):
           f"(search_id={search_id})", flush=True)
 
 
+def publish_interpretation(source):
+    """Ask a worker to decode a few of this source's new postings."""
+    search_id = f"interp-{uuid.uuid4().hex[:8]}"
+    conn = get_rabbit_connection()
+    ch = conn.channel()
+    ch.queue_declare(queue=TASK_QUEUE, durable=True)
+    task = {"source": source, "search_id": search_id,
+            "type": "interpret", "batch": INTERPRET_BATCH}
+    ch.basic_publish(
+        exchange="", routing_key=TASK_QUEUE, body=json.dumps(task),
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+    conn.close()
+    print(f"[scheduler] published interpretation for {source} "
+          f"(search_id={search_id})", flush=True)
+
+
 def main():
     sources = all_sources()
     if not sources:
@@ -114,6 +137,9 @@ def main():
         if "--freshness" in sys.argv:
             for source in sources:
                 publish_freshness(source)
+        if "--interpret" in sys.argv:
+            for source in sources:
+                publish_interpretation(source)
         print("[scheduler] one round published, exiting.")
         return
 
@@ -143,6 +169,17 @@ def main():
         )
     print(f"[scheduler] freshness checks: every "
           f"{FRESHNESS_INTERVAL_MINUTES} min per source")
+
+    # Interpretation: steady trickle, so the model never has a huge backlog
+    for position, source in enumerate(sources):
+        scheduler.add_job(
+            publish_interpretation, "interval",
+            seconds=INTERPRET_INTERVAL_MINUTES * 60, args=[source],
+            id=f"interp-{source}", max_instances=1, coalesce=True,
+            next_run_time=datetime.now() + timedelta(seconds=60 + 5 * position),
+        )
+    print(f"[scheduler] interpretation: every {INTERPRET_INTERVAL_MINUTES} min "
+          f"per source, {INTERPRET_BATCH} jobs per task")
 
     print("[scheduler] started. Press CTRL+C to stop.", flush=True)
     scheduler.start()
