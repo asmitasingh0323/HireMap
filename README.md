@@ -1,84 +1,225 @@
 # HireMap
 
-**A Distributed Pipeline for Real-Time Job Market Intelligence**
+A fault-tolerant distributed pipeline that collects job postings from several sources in parallel, keeps them current, and uses a local language model to turn each posting into a structured summary.
 
-HireMap aggregates job postings from multiple external sources in parallel, normalizes them into a unified schema, deduplicates across sources, and returns results within a user-defined deadline — even when individual workers crash mid-task. It is built to explore core distributed systems concepts: concurrent execution, process isolation, message-passing coordination, idempotent deduplication, and SLA-bounded execution.
+**Live system:** https://hiremap-dashboard.onrender.com
+**API:** https://hiremap-ffey.onrender.com
+
+> The free hosting tier sleeps when idle. Before searching, open
+> https://hiremap-ffey.onrender.com/api/health and wait for `{"status":"ok"}`
+> (30–50 seconds on the first request).
 
 ---
 
-## The Problem
+## What It Does
 
-Job postings are ephemeral and scattered across heterogeneous platforms. By the time a candidate manually searches LinkedIn, then Indeed, then company career pages, a high-value listing may already be saturated with applicants. There is no free tool that searches across multiple platforms at once, applies filters consistently, and returns deduplicated results within a bounded time window. HireMap treats this as a distributed systems problem rather than a UI problem: how do you aggregate data from unreliable sources, dedupe it idempotently, and return it within an SLA, even under partial failure?
+Two things make a job search slow: listings that are already closed, and descriptions that take minutes each to read.
+
+HireMap addresses both. A scheduler crawls six sources continuously, so listings stay current; a lifecycle system tracks whether each posting is still open and hides the ones that aren't; and a language-model worker reads each description and extracts the parts that matter — required skills, nice-to-have skills, seniority, whether the role is genuinely remote, and salary even when it isn't stated.
+
+The result is a dashboard of short structured cards instead of a list of long descriptions.
+
+Underneath, it is a distributed-systems project. Job data is the workload; the engineering is coordinating independent processes through a message broker, guaranteeing correctness under concurrency, recovering from failure, and keeping slow work from blocking fast work.
 
 ---
 
 ## Architecture
 
-HireMap follows a distributed worker-queue model coordinated through a RabbitMQ message broker. Independent, stateless worker processes pull tasks from a shared queue, fetch and normalize job data in parallel, and write deduplicated results to PostgreSQL. No worker shares memory with another; all coordination flows through the broker.
-
 ```
-  Producer / API  ──publishes tasks──►  RabbitMQ task_queue
-                                              │
-                          ┌───────────────────┼───────────────────┐
-                          ▼                   ▼                   ▼
-                       Worker A            Worker B            Worker N
-                     (any source)        (any source)        (any source)
-                          │                   │                   │
-                          └───────────────────┼───────────────────┘
-                                              ▼
-                                      PostgreSQL (jobs)
-                                   unified schema + UNIQUE
-                                   fingerprint deduplication
+                    ┌──────────────┐
+   Browser ───────▶ │  Flask API   │ ──── publishes tasks ────┐
+                    │ + SocketIO   │                          │
+                    └──────┬───────┘                          │
+                           │ reads                            ▼
+                           │                    ┌─────────────────────────┐
+                           │                    │        RabbitMQ         │
+                           │                    │                         │
+   Scheduler ──────────────┼───── publishes ──▶ │  task_queue             │
+   (APScheduler)           │                    │    crawls, freshness    │
+                           │                    │                         │
+                           │                    │  interpret_queue        │
+                           │                    │    model work, liveness │
+                           │                    └───────┬──────────┬──────┘
+                           │                            │          │
+                           │                            ▼          ▼
+                           │                    ┌───────────┐  ┌───────────┐
+                           │                    │  worker   │  │  worker   │
+                           │                    │  (crawl)  │  │(--interpret)
+                           │                    └─────┬─────┘  └─────┬─────┘
+                           │                          │              │
+                           │                          │              ▼
+                           │                          │        ┌──────────┐
+                           │                          │        │  Ollama  │
+                           │                          │        │llama3.2:3b
+                           │                          │        └──────────┘
+                           ▼                          ▼
+                    ┌────────────────────────────────────────┐
+                    │              PostgreSQL                │
+                    │   jobs (fingerprint UNIQUE), searches,  │
+                    │   task_status                           │
+                    └────────────────────────────────────────┘
 ```
 
-**Key components**
+### Two queues, not one
 
-- **Producer** — publishes one task per source into the durable RabbitMQ task queue, tagged with a `search_id`.
-- **Worker pool** — stateless processes that consume tasks, run the matching fetcher, save to Postgres, and acknowledge (ACK) only after the data is safely stored.
-- **RabbitMQ broker** — distributes tasks and provides native fault recovery: an unacknowledged task from a crashed worker is automatically requeued to a surviving worker.
-- **PostgreSQL** — stores normalized jobs; a `UNIQUE` constraint on the fingerprint column enforces deduplication at the database level via `ON CONFLICT DO NOTHING`.
+This is the most important design decision in the system, and it was made after the single-queue version broke.
+
+Interpretation batches take 50–80 seconds; a crawl takes a few. When both ran on one queue, a user's search sat behind model work and returned zero results from some sources. The queues are now split by latency profile:
+
+| Queue | Work | Character |
+|---|---|---|
+| `task_queue` | crawls, freshness sweeps | fast, interactive |
+| `interpret_queue` | model interpretation, link checks | slow, background |
+
+A worker picks its role at startup:
+
+```bash
+python worker.py w1              # consumes task_queue
+python worker.py ai-1 --interpret   # consumes interpret_queue
+```
+
+Searches now complete in seconds regardless of model load.
+
+### How a posting flows through
+
+1. The **scheduler** publishes a crawl task per source on a recurring interval, spaced to respect each source's rate limit.
+2. A **worker** takes the task, calls that source's adapter, and normalizes the results.
+3. Results are written to **PostgreSQL**. A `UNIQUE` fingerprint plus `ON CONFLICT` makes the insert idempotent — duplicates across sources collapse to one row, and re-seeing a job refreshes `last_seen`.
+4. The **interpretation worker** picks up jobs that have a real description and stores the model's structured answer.
+5. The **liveness worker** re-checks stored URLs and expires listings the site reports as gone.
+6. The **API** serves only `status = 'active'` rows; the **dashboard** renders them as decoded cards.
 
 ---
 
 ## Data Sources
 
-| Source | Method | Notes |
-|---|---|---|
-| Adzuna | REST API | Title, company, location, salary, contract type |
-| RemoteOK | Public JSON feed | Title, company, skills (tags), salary |
-| WeWorkRemotely | HTML scraping (BeautifulSoup) | Title, company, location/region |
+Six live sources, each behind one adapter:
 
-LinkedIn and Indeed are excluded due to legal and technical restrictions.
+| Source | Type | Descriptions |
+|---|---|---|
+| Adzuna | REST API (key required) | teaser only (~500 chars) — excluded from interpretation |
+| RemoteOK | JSON feed | yes |
+| WeWorkRemotely | HTML/RSS | no |
+| Remotive | JSON API | yes |
+| Arbeitnow | JSON API | yes |
+| Greenhouse | per-company boards | yes (`content=true`) |
+
+Plus `slow_test`, a synthetic adapter used to exercise deadline and fault behaviour on demand.
+
+Indeed and LinkedIn are deliberately excluded for legal and technical reasons.
+
+### Adding a source
+
+Write one file in `adapters/`. Nothing else changes — `__init_subclass__` registers the class and `pkgutil.iter_modules` imports the package at startup, so the adapter is discovered automatically.
+
+```python
+from .base import SourceAdapter
+
+class MySource(SourceAdapter):
+    name = "mysource"
+    requests_per_minute = 20
+
+    def fetch(self, keyword, location, limit):
+        # return a list of raw dicts from the source
+        ...
+```
+
+The base class handles the rest: field normalization, mojibake repair, location cleanup (every spelling of "remote" collapses to one value), salary parsing (`$120,000` and `95k` both become numbers, reversed ranges are swapped), HTML-to-text for descriptions, fingerprinting, keyword matching, and the US-only and English-only filters.
 
 ---
 
-## Deduplication
+## The Interpretation Layer
 
-Each job is assigned a deterministic fingerprint generated by hashing the normalized title, company, and location. These three fields identify a role consistently across sources, while unstable fields like salary and posted date are excluded because sources report them inconsistently. The fingerprint column carries a `UNIQUE` constraint, so concurrent inserts from parallel workers cannot create duplicates — `ON CONFLICT DO NOTHING` makes inserts idempotent without any shared-memory lock between workers.
+`interpreter.py` sends a description to a local model and stores structured fields.
+
+The model is **`llama3.2:3b` running through Ollama** — no account, no API key, no per-request cost, and no posting data leaves the machine.
+
+Extracted per job: `required skills`, `preferred skills`, `seniority`, `work arrangement`, `salary_min`, `salary_max`, and `salary_basis` (whether the figure was stated in the posting or estimated).
+
+**The parser assumes the model will misbehave.** `parse_answer()` finds JSON inside prose or code fences, accepts a comma-separated string where a list was requested, clamps any value outside the allowed set to `unknown`, converts hourly rates to yearly at 2,080 hours, and rejects figures outside a believable range. A malformed answer produces empty or unknown fields — it can never break the worker.
+
+Only jobs with at least 800 characters of description are interpreted. Short teasers produced confident nonsense, so they are skipped rather than guessed at.
+
+### Seniority comes from a rule, not the model
+
+The model consistently read titles like *Director of Engineering* and answered `senior`, because those descriptions are full of hands-on engineering work. Two prompt rewrites changed nothing — a 3B model does not follow that instruction reliably.
+
+Seniority is therefore decided in `title_rules.py`, and the model is only consulted when the title names no level. The rule handles the cases that need care: a *Product* Manager manages a product, not people, and is not a lead.
+
+```bash
+python title_rules.py   # runs the rule against its test cases
+```
+
+This is the general principle the project settled on: **rules where rules are reliable, the model where they are not.**
+
+---
+
+## Measuring Quality
+
+Hand-checking model output was too slow to iterate on, so `score_interpretation.py` scores every interpreted job automatically against independent keyword rules.
+
+```bash
+python score_interpretation.py        # score everything interpreted
+python score_interpretation.py 100    # score a random 100
+```
+
+Current results on 64 interpreted jobs:
+
+| Measure | Result |
+|---|---|
+| Skill grounding — extracted skills that appear in the description | **92%** (399/432) |
+| Jobs producing skills at all | **100%** (64/64) |
+| Seniority set correctly by the title rule | **100%** (39/39) |
+| Seniority agreement where the model decided | **70%** (7/10) |
+| Work arrangement agreement | **91%** (10/11) |
+
+Skill grounding is the number that matters most — it measures whether the model is inventing skills that aren't in the posting. It rose from 75% to 92% over the term.
+
+The scorer reports rule-decided and model-decided jobs **separately**, so the seniority figure still measures the model rather than the title rule agreeing with itself.
+
+`eval_interpretation.py` provides hand-checked sampling when a true accuracy figure is needed; results append to `interpretation_eval.csv`.
+
+---
+
+## Freshness and Lifecycle
+
+Every job carries `first_seen`, `last_seen`, and `status`.
+
+- A crawl that sees a job again refreshes `last_seen`.
+- `expire_stale_jobs()` marks anything a source has stopped returning as expired.
+- `liveness.py` re-checks stored URLs directly: HEAD, falling back to GET on 403/405/501, spaced by each source's own rate limit.
+
+**Only 404 and 410 expire a listing.** Blocks, redirects and timeouts are recorded as unknown, because a site refusing automated requests must never be mistaken for a closed job. Expired rows are marked, not deleted, so history is preserved.
+
+Every API query filters on `status = 'active'`.
 
 ---
 
 ## Fault Tolerance
 
-Fault recovery operates at two levels:
+Inherited from Term 1 and extended:
 
-- **Task-level (RabbitMQ native):** A task message stays unacknowledged while a worker processes it. The worker ACKs only after a successful save. If the worker crashes, times out, or is killed before ACKing, RabbitMQ automatically requeues the message to another worker. No task is lost.
-- **Worker-level (Failure Monitor):** Heartbeats track the live worker count; if it drops below a configured minimum, a replacement worker is started to maintain throughput. *(In progress.)*
-
-This has been validated by violently killing a worker mid-task and confirming a surviving worker completes the requeued task with no loss and no duplicate insertion.
+- **Task level** — a worker killed mid-task never acknowledged its message, so RabbitMQ requeues it and another worker completes it. No task lost, no duplicate created.
+- **Process level** — `monitor.py` detects missed heartbeats and spawns a replacement worker.
+- **Source isolation** — one source failing does not affect the others. Demonstrated with a deliberately failing adapter: it failed every assigned task while five healthy sources completed 80 tasks uninterrupted.
+- **Visible failure** — failures are recorded in `task_status` with the error text, so a dead source shows as failed rather than leaving the dashboard waiting forever. Error strings are redacted before storage (an API key once appeared in a logged URL).
+- **Self-migrating schema** — `ensure_schema()` runs the base schema plus an ordered list of additive updates at every startup, so local and cloud environments catch themselves up. This exists because columns added locally were silently missing in production.
 
 ---
 
 ## Tech Stack
 
-| Component | Technology |
+| Piece | Technology |
 |---|---|
 | Workers | Python, Requests, BeautifulSoup4 |
-| Message broker | RabbitMQ |
+| Broker | RabbitMQ |
 | Storage | PostgreSQL |
-| Containers | Docker / Docker Compose |
-| Backend API | Flask + Flask-SocketIO *(in progress)* |
-| Frontend | React + Recharts *(planned)* |
+| Containers | Docker Compose |
+| API | Flask + Flask-SocketIO |
+| Frontend | React + Vite + Recharts |
+| Scheduling | APScheduler |
+| Analytics | Pandas |
+| Model | Ollama (`llama3.2:3b`) |
 
 ---
 
@@ -87,101 +228,154 @@ This has been validated by violently killing a worker mid-task and confirming a 
 ### Prerequisites
 
 - Docker Desktop
-- Python 3.11+
-- A free [Adzuna API](https://developer.adzuna.com/) account (Application ID + Key)
+- Python 3.10+
+- Node.js 18+ (for the dashboard)
+- [Ollama](https://ollama.com) (for the interpretation layer)
 
 ### Setup
 
 ```bash
 # 1. Clone and enter the project
-git clone https://github.com/asmitasingh14/hiremap.git
-cd hiremap
+git clone https://github.com/asmitasingh0323/HireMap.git
+cd HireMap/HireMap_Project
 
-# 2. Create a .env file (see below) with your Adzuna keys and DB/broker settings
-
-# 3. Start the infrastructure (PostgreSQL + RabbitMQ)
+# 2. Start PostgreSQL and RabbitMQ
 docker compose up -d
 
-# 4. Load the database schema
-Get-Content schema.sql | docker exec -i hiremap_postgres psql -U hiremap -d hiremap_db   # PowerShell
-# or, on macOS/Linux:
-# docker exec -i hiremap_postgres psql -U hiremap -d hiremap_db < schema.sql
-
-# 5. Create a virtual environment and install dependencies
+# 3. Create a virtual environment and install dependencies
 python -m venv venv
-venv\Scripts\Activate.ps1            # PowerShell
-pip install requests beautifulsoup4 psycopg2-binary pika python-dotenv
+venv\Scripts\activate          # Windows
+# source venv/bin/activate     # macOS / Linux
+pip install -r requirements.txt
+
+# 4. Create the schema (also runs automatically at startup)
+python -c "from db_utils import ensure_schema; ensure_schema()"
+
+# 5. Pull the model
+ollama pull llama3.2:3b
+
+# 6. Install dashboard dependencies
+cd dashboard && npm install && cd ..
 ```
 
-### Example `.env`
+### `.env`
 
-```
-ADZUNA_APP_ID=your_app_id
-ADZUNA_APP_KEY=your_app_key
-
-DB_HOST=127.0.0.1
+```ini
+# Database
+DB_HOST=localhost
 DB_PORT=5433
 DB_NAME=hiremap_db
 DB_USER=hiremap
 DB_PASSWORD=hiremap_pass
 
+# Broker
 RABBIT_HOST=localhost
 RABBIT_PORT=5673
 RABBIT_USER=hiremap
 RABBIT_PASS=hiremap_pass
+
+# Adzuna (free tier: https://developer.adzuna.com)
+ADZUNA_APP_ID=your_app_id
+ADZUNA_APP_KEY=your_app_key
+
+# Model
+MODEL_BACKEND=ollama
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2:3b
+MAX_PROMPT_CHARS=8000
+
+# Filtering
+US_ONLY=true
 ```
 
-> Note: ports 5433 (Postgres) and 5673 (RabbitMQ) are used to avoid collisions with any native database/broker already installed on the host.
+In cloud deployment, `DATABASE_URL` and `RABBITMQ_URL` override the individual settings above.
 
-### Running the pipeline
+### Running
+
+Each of these goes in its own terminal:
 
 ```bash
-# Start one or more workers (each in its own terminal)
-python worker.py worker-A
-python worker.py worker-B
-
-# Publish a search (keyword + location) — fans out one task per source
-python producer.py "python developer" "Bellevue"
+python worker.py w1                  # crawl worker
+python worker.py ai-1 --interpret    # interpretation worker
+python scheduler.py                  # continuous crawling
+python api.py                        # API on :5000
+cd dashboard && npm run dev          # dashboard on :5173
 ```
 
-Watch the worker terminals split the tasks and stream results into Postgres.
+Open http://localhost:5173.
 
-### Inspecting results
+### Running one task at a time
+
+The scheduler also works as a one-shot publisher, which is how most development is done:
 
 ```bash
-docker exec -it hiremap_postgres psql -U hiremap -d hiremap_db -c "SELECT source, COUNT(*) FROM jobs GROUP BY source;"
+python scheduler.py --once           # one crawl of every source
+python scheduler.py --once --interpret   # one batch of model work
+python scheduler.py --once --liveness    # one round of link checks
+python scheduler.py --once --freshness   # one expiry sweep
 ```
-
-The RabbitMQ management UI is available at **http://localhost:15672** (user `hiremap`).
 
 ---
 
-## Evaluation Criteria
+## Tuning
 
-The system is measured against three production-grade criteria:
+All optional, all read from `.env`:
 
-1. **Correctness & Idempotency** — the distributed pipeline yields the same deduplicated result set as a sequential single-threaded run. ✅ *Validated*
-2. **Fault Recovery** — in-flight tasks are reassigned and completed when a worker is violently terminated mid-execution. ✅ *Validated*
-3. **Deadline Adherence** — the API enforces a timeout, returning valid partial results without crashing, regardless of remaining queue depth. ⬜ *In progress*
+| Variable | Default | Meaning |
+|---|---|---|
+| `CRAWL_INTERVAL_MINUTES` | 15 | how often each source is crawled |
+| `FRESHNESS_INTERVAL_MINUTES` | 60 | how often stale jobs are expired |
+| `INTERPRET_INTERVAL_MINUTES` | 10 | how often model batches are published |
+| `INTERPRET_BATCH` | 5 | jobs per model batch |
+| `LIVENESS_INTERVAL_MINUTES` | 20 | how often URLs are re-checked |
+| `LIVENESS_BATCH` | 5 | URLs per check round |
+| `MAX_PROMPT_CHARS` | 8000 | how much of a description the model reads |
+| `US_ONLY` | true | drop non-US postings at the adapter layer |
+
+The scheduler never crawls faster than a source allows: the gap between tasks is `max(preferred interval, number_of_crawls × 60 / requests_per_minute)`.
+
+---
+
+## Scripts
+
+| Script | Purpose |
+|---|---|
+| `score_interpretation.py` | automatic quality score across all interpreted jobs |
+| `eval_interpretation.py` | hand-checked sampling into `interpretation_eval.csv` |
+| `title_rules.py` | the seniority rule, runnable as its own test |
+| `backfill_seniority.py` | reapply the title rule to already-interpreted rows |
+| `cleanup_non_us.py` | apply current US/English filters to stored rows |
+| `market.py` | the Pandas market summary, runnable directly |
+| `interpreter.py N` | interpret N stored jobs and print the result |
+| `monitor.py` | worker heartbeat monitor |
+
+Most take `--apply` or a limit; run them with no arguments first to preview.
+
+---
+
+## API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/health` | `{"status":"ok"}` |
+| `POST /api/search` | publishes a search, streams results over SocketIO |
+| `GET /api/results` | active jobs with interpreted fields |
+| `GET /api/market` | market summary (skills, seniority mix, hiring activity, pay by level, top companies) |
 
 ---
 
 ## Project Status
 
-- [x] Dockerized infrastructure (PostgreSQL + RabbitMQ)
-- [x] Unified normalization schema
-- [x] Three data sources (Adzuna, RemoteOK, WeWorkRemotely)
-- [x] Fingerprint deduplication (`ON CONFLICT DO NOTHING`)
-- [x] Distributed RabbitMQ workers with ACK-based task recovery
-- [x] Fault recovery validated under worker kill
-- [ ] Failure Monitor (heartbeats + auto-respawn)
-- [ ] Flask API + deadline enforcement
-- [ ] React + Recharts dashboard
-- [ ] Benchmarking, testing, and demo
+**Term 1 (complete)** — distributed worker-queue pipeline, cross-source deduplication, fault recovery at task and process level, deadline enforcement, cloud deployment.
+
+**Term 2 / Phase 2 (complete)** — pluggable adapters, continuous scheduled crawling with per-source rate limits, three new sources, lifecycle tracking and liveness checking, the interpretation layer, decoded job cards, the market summary view, and automatic quality measurement.
+
+**Not yet done** — automated pytest suite, Lever and USAJobs adapters, resume-based matching, and a larger liveness sample.
+
+**Next** — embedding-based semantic search (so "ML engineer" also matches "machine learning specialist"), resume matching against the structured fields, richer dashboard filtering and saved searches, per-company hiring trends, autoscaling workers by queue depth, and proper metrics.
 
 ---
 
 ## Author
 
-**Asmita Singh** 
-
+Asmita Singh — Binghamton University
