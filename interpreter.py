@@ -28,7 +28,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
 # Descriptions are trimmed before the prompt: the first part of a posting
 # holds the role and requirements; the rest is usually boilerplate.
-MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "3500"))
+MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "8000"))
 
 SENIORITY_VALUES = {"intern", "junior", "mid", "senior", "lead", "unknown"}
 ARRANGEMENT_VALUES = {"remote", "hybrid", "onsite", "unknown"}
@@ -49,7 +49,22 @@ Return ONLY a JSON object with exactly these keys:
             lowercase, each 1-3 words (for example "python", "aws", "sql").
             Use only skills the description actually asks for. [] if unclear.
   "seniority": one of "intern", "junior", "mid", "senior", "lead", "unknown".
+            Decide from the experience asked for, not only the title:
+              internship or student role     -> "intern"
+              0-2 years, "entry level", "new grad" -> "junior"
+              3-5 years, no "senior" in title      -> "mid"
+              5+ years, or "senior"/"staff"/"principal" in the title -> "senior"
+              manages engineers, "manager", "head of", "director" -> "lead"
+            Use "unknown" only when the description says nothing about
+            experience level at all.
   "work_arrangement": one of "remote", "hybrid", "onsite", "unknown".
+            This is HOW the work is done, not where the company hires.
+            A city in the location field does NOT make a job remote.
+              says remote / work from anywhere / distributed -> "remote"
+              says N days in office, or "hybrid"             -> "hybrid"
+              says on-site, in-office, or names an office the
+                person must work from                        -> "onsite"
+            Use "unknown" when the description does not say.
 
 No explanation, no extra keys."""
 

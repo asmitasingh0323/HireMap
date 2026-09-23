@@ -5,6 +5,7 @@ containing one class that inherits from SourceAdapter.
 Subclasses are registered automatically - no central list to edit.
 """
 import html
+import os
 import re
 import unicodedata
 
@@ -40,8 +41,16 @@ class SourceAdapter:
         cleaned = []
         for job in jobs:
             normalized = normalize_job(job, self.name)
-            if normalized["title"]:
-                cleaned.append(normalized)
+            if not normalized["title"]:
+                continue
+            # This project is about US jobs written in English, so foreign
+            # and non-English postings are dropped before they are stored.
+            if US_ONLY and not is_us_location(normalized["location"]):
+                continue
+            if US_ONLY and not looks_english(normalized["title"],
+                                             normalized["description"]):
+                continue
+            cleaned.append(normalized)
         return cleaned
 
 
@@ -81,7 +90,11 @@ JOB_FIELDS = [
 
 # Longest description we keep. Enough for a model to read, small enough
 # that the database and the prompts stay manageable.
-MAX_DESCRIPTION_CHARS = 6000
+MAX_DESCRIPTION_CHARS = 12000
+
+# Keep only jobs that can be worked from the United States.
+# Turn it off with:  $env:US_ONLY="false"
+US_ONLY = os.getenv("US_ONLY", "true").lower() == "true"
 
 # Different words for "this job is remote"
 REMOTE_WORDS = {
@@ -180,3 +193,110 @@ def clean_description(value):
     if not text:
         return None
     return text[:MAX_DESCRIPTION_CHARS]
+
+
+# ---------------------------------------------------------------------------
+# Country filtering: this project is about jobs a person in the US can take.
+# ---------------------------------------------------------------------------
+
+US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+    "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+    "district of columbia",
+}
+
+US_STATE_CODES = {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id",
+    "il", "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms",
+    "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok",
+    "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv",
+    "wi", "wy", "dc",
+}
+
+US_WORDS = {"united states", "usa", "u.s.", "u.s", "us-based", "nationwide",
+            "anywhere in the us", "remote us", "us remote"}
+
+# Countries and cities that show up often in these feeds and are not the US
+NON_US_WORDS = {
+    "india", "bengaluru", "bangalore", "hyderabad", "pune", "mumbai", "delhi",
+    "germany", "deutschland", "berlin", "munich", "münchen", "hamburg",
+    "frankfurt", "cologne", "köln", "stuttgart", "potsdam", "kassel",
+    "united kingdom", "england", "london", "manchester", "derby", "frome",
+    "scotland", "ireland", "dublin", "france", "paris", "spain", "madrid",
+    "barcelona", "portugal", "lisbon", "italy", "milan", "rome",
+    "netherlands", "amsterdam", "belgium", "brussels", "poland", "warsaw",
+    "krakow", "kraków", "romania", "bucharest", "ukraine", "kyiv", "kiev",
+    "sweden", "stockholm", "norway", "oslo", "denmark", "copenhagen",
+    "finland", "helsinki", "switzerland", "zurich", "zürich", "austria",
+    "vienna", "czech", "prague", "greece", "athens", "turkey", "istanbul",
+    "canada", "toronto", "vancouver", "montreal", "ottawa",
+    "mexico", "brazil", "sao paulo", "são paulo", "argentina", "colombia",
+    "chile", "peru", "latam", "australia", "sydney", "melbourne",
+    "new zealand", "singapore", "japan", "tokyo", "china", "shanghai",
+    "beijing", "hong kong", "korea", "seoul", "israel", "tel aviv",
+    "south africa", "nigeria", "kenya", "egypt", "dubai", "uae",
+    "philippines", "manila", "indonesia", "jakarta", "vietnam", "thailand",
+    "pakistan", "bangladesh", "emea", "apac", "europe", "european",
+}
+
+
+def is_us_location(location):
+    """Best guess at whether a job can be worked from the United States.
+
+    Feeds write location freely ("Bengaluru, India", "San Francisco, CA",
+    "Remote"), so this is a judgement, not a lookup. Unknown or plain
+    "Remote" counts as US, because dropping a genuine US remote job is
+    worse here than keeping an occasional foreign one.
+    """
+    if not location:
+        return True
+    text = location.lower()
+
+    if any(word in text for word in US_WORDS):
+        return True
+    if any(word in text for word in NON_US_WORDS):
+        return False
+
+    # "Seattle, WA" / "Austin, TX • New York, NY"
+    for piece in re.split(r"[,/|•·]| - ", text):
+        piece = piece.strip().strip(".")
+        if piece in US_STATES or piece in US_STATE_CODES:
+            return True
+
+    # Nothing recognisable: keep it (e.g. "Remote", "Anywhere")
+    return True
+
+
+# Words that appear constantly in these languages but almost never in an
+# English job posting. Two or more hits means the posting is not in English.
+NON_ENGLISH_MARKERS = [
+    # German
+    " und ", " oder ", " mit ", " für ", " wir ", " unsere ", " du ", " dich ",
+    "erfahrung", "kenntnisse", "aufgaben", "mitarbeiter",
+    # French
+    " et ", " ou ", " avec ", " pour ", " nous ", " vous ", " votre ", " des ",
+    "équipe", "compétences", "entreprise", "stage",
+    # Spanish / Portuguese / Italian / Dutch
+    " y ", " para ", " con ", " nosotros ", " experiencia ", " empresa ",
+    " e ", " com ", " nossa ", " wij ", " onze ", " ervaring ",
+]
+
+
+def looks_english(*texts):
+    """Rough language check: True unless the text is clearly another language.
+
+    A tiny keyword test, not a language model. It only has to be good enough
+    to keep German and French postings out of an English-only dataset.
+    """
+    blob = " ".join(t for t in texts if t).lower()
+    if not blob.strip():
+        return True
+    hits = sum(1 for marker in NON_ENGLISH_MARKERS if marker in f" {blob} ")
+    return hits < 3

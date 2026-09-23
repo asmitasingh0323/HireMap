@@ -169,10 +169,16 @@ def freshness_summary():
 # Interpretation (phase 2, weeks 9-10)
 # ---------------------------------------------------------------------------
 
-def jobs_needing_interpretation(limit=10, source=None):
-    """Active jobs that have a description but have not been interpreted yet.
+# Some feeds (Adzuna) only return a short teaser that stops mid-sentence.
+# There is nothing in it for the model to read, so those are left alone.
+MIN_DESCRIPTION_CHARS = int(os.getenv("MIN_DESCRIPTION_CHARS", "800"))
 
-    Newest first, so the freshest postings are decoded before older ones.
+
+def jobs_needing_interpretation(limit=10, source=None):
+    """Active jobs with a real description that have not been interpreted yet.
+
+    Teasers shorter than MIN_DESCRIPTION_CHARS are skipped: interpreting them
+    produces guesses, not facts. Newest first.
     """
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -181,9 +187,10 @@ def jobs_needing_interpretation(limit=10, source=None):
         FROM jobs
         WHERE status = 'active'
           AND description IS NOT NULL
+          AND LENGTH(description) >= %s
           AND interpreted_at IS NULL
     """
-    params = []
+    params = [MIN_DESCRIPTION_CHARS]
     if source:
         sql += " AND source = %s"
         params.append(source)
@@ -221,11 +228,11 @@ def interpretation_summary():
     cur = conn.cursor()
     cur.execute("""
         SELECT source,
-               COUNT(*) FILTER (WHERE description IS NOT NULL) AS with_text,
+               COUNT(*) FILTER (WHERE LENGTH(description) >= %s) AS readable,
                COUNT(interpreted_at) AS interpreted
         FROM jobs WHERE status = 'active'
         GROUP BY source ORDER BY source
-    """)
+    """, (MIN_DESCRIPTION_CHARS,))
     rows = cur.fetchall()
     cur.close()
     conn.close()
