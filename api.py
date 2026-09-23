@@ -172,6 +172,21 @@ def search():
     return jsonify({"search_id": search_id, "status": "started"})
 
 
+@app.route("/api/market", methods=["GET"])
+def market():
+    """Market summary over everything collected so far (weeks 13-14).
+
+    Built from stored data only: no crawling, no model calls, so the page
+    loads immediately.
+    """
+    try:
+        from market import market_summary
+        return jsonify(market_summary())
+    except Exception as e:
+        print(f"[api] market summary failed: {e}", flush=True)
+        return jsonify({"error": "market summary unavailable"}), 500
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})

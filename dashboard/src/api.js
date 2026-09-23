@@ -22,3 +22,10 @@ export async function startSearch(keyword, location, deadline) {
     });
     return resp.json();
 }
+
+// Market summary: aggregates over everything stored, not a live search.
+export async function fetchMarket() {
+    const resp = await fetch(`${API_BASE}/api/market`);
+    if (!resp.ok) throw new Error("market summary unavailable");
+    return resp.json();
+}

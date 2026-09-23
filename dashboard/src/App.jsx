@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
-import { socket, startSearch, API_BASE } from "./api";
+import { socket, startSearch, fetchMarket, API_BASE } from "./api";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend,
+  ResponsiveContainer, Cell, CartesianGrid,
 } from "recharts";
 import "./App.css";
 
@@ -53,6 +54,187 @@ function splitSkills(text) {
   return text.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// One hue per chart: each chart shows a single series, so identity never
+// depends on telling two colors apart. The paid-range chart is the one
+// exception and uses two clearly different hues plus a legend.
+const INK = "#334155";
+const MUTED = "#64748b";
+const PRIMARY = "#4f46e5";
+const ACCENT = "#f59e0b";
+
+function StatTile({ label, value, hint }) {
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 10, padding: "14px 18px",
+      minWidth: 150, boxShadow: "0 1px 3px rgba(15,23,42,0.08)",
+    }}>
+      <div style={{ fontSize: "1.7rem", fontWeight: 600, color: INK }}>
+        {value}
+      </div>
+      <div style={{ fontSize: "0.8rem", color: MUTED }}>{label}</div>
+      {hint && (
+        <div style={{ fontSize: "0.72rem", color: MUTED, marginTop: 2 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div className="chart-card" style={{ flex: "1 1 340px", minWidth: 300 }}>
+      <h3 style={{ marginBottom: 2 }}>{title}</h3>
+      {subtitle && (
+        <div style={{ fontSize: "0.75rem", color: MUTED, marginBottom: 6 }}>
+          {subtitle}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function MarketView({ market, loading, error, onReload }) {
+  if (loading) return <p className="empty">Loading market summary…</p>;
+  if (error) {
+    return (
+      <p className="empty">
+        {error} <button onClick={onReload}>Try again</button>
+      </p>
+    );
+  }
+  if (!market || market.total_jobs === 0) {
+    return <p className="empty">No jobs collected yet.</p>;
+  }
+
+  const remote = (market.arrangement || [])
+    .find((a) => a.name === "remote");
+  const remoteShare = remote
+    ? Math.round((100 * remote.jobs) / market.total_jobs) + "%" : "—";
+
+  return (
+    <section style={{ padding: "0 4px" }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+                    marginBottom: 16 }}>
+        <StatTile label="live listings" value={market.total_jobs} />
+        <StatTile label="read by the model" value={market.interpreted_jobs}
+                  hint={`of ${market.total_jobs} live listings`} />
+        <StatTile label="remote" value={remoteShare}
+                  hint="of roles where the model could tell" />
+        <StatTile label="sources" value={(market.sources || []).length} />
+      </div>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        {market.top_skills.length > 0 && (
+          <ChartCard title="Most requested skills"
+                     subtitle="how many live listings ask for each">
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={market.top_skills} layout="vertical"
+                        margin={{ left: 8, right: 24 }}>
+                <XAxis type="number" allowDecimals={false}
+                       tick={{ fill: MUTED, fontSize: 12 }} />
+                <YAxis type="category" dataKey="skill" width={110}
+                       tick={{ fill: INK, fontSize: 12 }} />
+                <Tooltip cursor={{ fill: "rgba(79,70,229,0.06)" }} />
+                <Bar dataKey="jobs" fill={PRIMARY} radius={[0, 4, 4, 0]}
+                     barSize={14} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {market.hiring_activity.length > 0 && (
+          <ChartCard title="Hiring activity"
+                     subtitle="new listings first seen each day">
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={market.hiring_activity}
+                         margin={{ left: 4, right: 16, top: 8 }}>
+                <CartesianGrid stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="day" tick={{ fill: MUTED, fontSize: 11 }} />
+                <YAxis allowDecimals={false}
+                       tick={{ fill: MUTED, fontSize: 12 }} />
+                <Tooltip />
+                <Line type="monotone" dataKey="jobs" stroke={PRIMARY}
+                      strokeWidth={2} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {market.seniority.length > 0 && (
+          <ChartCard title="Seniority mix"
+                     subtitle="live listings by level the model read">
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={market.seniority}>
+                <XAxis dataKey="name" tick={{ fill: INK, fontSize: 12 }} />
+                <YAxis allowDecimals={false}
+                       tick={{ fill: MUTED, fontSize: 12 }} />
+                <Tooltip cursor={{ fill: "rgba(79,70,229,0.06)" }} />
+                <Bar dataKey="jobs" fill={PRIMARY} radius={[4, 4, 0, 0]}
+                     barSize={34} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {market.arrangement.length > 0 && (
+          <ChartCard title="Where the work happens"
+                     subtitle="remote, hybrid or onsite">
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={market.arrangement}>
+                <XAxis dataKey="name" tick={{ fill: INK, fontSize: 12 }} />
+                <YAxis allowDecimals={false}
+                       tick={{ fill: MUTED, fontSize: 12 }} />
+                <Tooltip cursor={{ fill: "rgba(79,70,229,0.06)" }} />
+                <Bar dataKey="jobs" fill={PRIMARY} radius={[4, 4, 0, 0]}
+                     barSize={34} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {market.salary_by_seniority.length > 0 && (
+          <ChartCard title="Pay by level"
+                     subtitle="average of the ranges found, in dollars a year">
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={market.salary_by_seniority}>
+                <XAxis dataKey="name" tick={{ fill: INK, fontSize: 12 }} />
+                <YAxis tick={{ fill: MUTED, fontSize: 12 }}
+                       tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+                <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}`} />
+                <Legend />
+                <Bar dataKey="low" name="range low" fill={PRIMARY}
+                     radius={[4, 4, 0, 0]} barSize={18} />
+                <Bar dataKey="high" name="range high" fill={ACCENT}
+                     radius={[4, 4, 0, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+
+        {market.top_companies.length > 0 && (
+          <ChartCard title="Companies hiring most"
+                     subtitle="live listings per company">
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={market.top_companies} layout="vertical"
+                        margin={{ left: 8, right: 24 }}>
+                <XAxis type="number" allowDecimals={false}
+                       tick={{ fill: MUTED, fontSize: 12 }} />
+                <YAxis type="category" dataKey="name" width={120}
+                       tick={{ fill: INK, fontSize: 12 }} />
+                <Tooltip cursor={{ fill: "rgba(79,70,229,0.06)" }} />
+                <Bar dataKey="jobs" fill={PRIMARY} radius={[0, 4, 4, 0]}
+                     barSize={14} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [keyword, setKeyword] = useState("python developer");
   const [location, setLocation] = useState("Seattle");
@@ -65,6 +247,29 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
   const [connected, setConnected] = useState(false);
+
+  // Market view (weeks 13-14)
+  const [view, setView] = useState("search");     // "search" | "market"
+  const [market, setMarket] = useState(null);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState(null);
+
+  const loadMarket = async () => {
+    setMarketLoading(true);
+    setMarketError(null);
+    try {
+      setMarket(await fetchMarket());
+    } catch (e) {
+      setMarketError("Could not load the market summary.");
+    } finally {
+      setMarketLoading(false);
+    }
+  };
+
+  // Load it the first time the market tab is opened, then on demand
+  useEffect(() => {
+    if (view === "market" && !market && !marketLoading) loadMarket();
+  }, [view]);
 
   // Wire up socket listeners once
   useEffect(() => {
@@ -142,7 +347,32 @@ export default function App() {
         </span>
       </header>
 
+      {/* VIEW SWITCH */}
+      <div style={{ display: "flex", gap: 8, margin: "4px 0 12px" }}>
+        {[["search", "Search"], ["market", "Market"]].map(([key, label]) => (
+          <button key={key} onClick={() => setView(key)}
+            style={{
+              padding: "6px 16px", borderRadius: 8, cursor: "pointer",
+              border: view === key ? "none" : "1px solid #cbd5e1",
+              background: view === key ? PRIMARY : "#fff",
+              color: view === key ? "#fff" : INK,
+            }}>{label}</button>
+        ))}
+        {view === "market" && (
+          <button onClick={loadMarket}
+            style={{ padding: "6px 14px", borderRadius: 8, cursor: "pointer",
+                     border: "1px solid #cbd5e1", background: "#fff",
+                     color: MUTED }}>Refresh</button>
+        )}
+      </div>
+
+      {view === "market" && (
+        <MarketView market={market} loading={marketLoading}
+                    error={marketError} onReload={loadMarket} />
+      )}
+
       {/* SEARCH FORM */}
+      {view === "search" && (
       <section className="search-bar">
         <input
           value={keyword}
@@ -165,9 +395,10 @@ export default function App() {
           {status === "running" ? "Searching…" : "Search"}
         </button>
       </section>
+      )}
 
       {/* WORKER / SOURCE STATUS PANEL */}
-      {status !== "idle" && (
+      {view === "search" && status !== "idle" && (
         <section className="sources-panel">
           {expectedSources.map((src) => {
             const isDone = doneSources.includes(src);
@@ -183,7 +414,7 @@ export default function App() {
       )}
 
       {/* SUMMARY */}
-      {summary && (
+      {view === "search" && summary && (
         <section className={`summary ${summary.complete ? "complete" : "partial"}`}>
           <strong>{summary.complete ? "Complete" : "Partial (deadline reached)"}</strong>
           {" — "}{summary.total_results} jobs from {summary.completed_sources.length}/{expectedSources.length} sources
@@ -191,7 +422,7 @@ export default function App() {
       )}
 
       {/* CHARTS */}
-      {jobs.length > 0 && (
+      {view === "search" && jobs.length > 0 && (
         <section className="charts">
           <div className="chart-card">
             <h3>Jobs by Source</h3>
@@ -222,6 +453,7 @@ export default function App() {
       )}
 
       {/* RESULTS */}
+      {view === "search" && (
       <section className="results">
         {jobs.map((j, i) => (
           <div key={i} className="job-card">
@@ -310,6 +542,7 @@ export default function App() {
           <p className="empty">Workers fetching… results will stream in live.</p>
         )}
       </section>
+      )}
     </div>
   );
 }
