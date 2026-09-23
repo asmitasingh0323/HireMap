@@ -53,6 +53,11 @@ FRESHNESS_INTERVAL_MINUTES = int(os.getenv("FRESHNESS_INTERVAL_MINUTES", "60"))
 INTERPRET_INTERVAL_MINUTES = int(os.getenv("INTERPRET_INTERVAL_MINUTES", "10"))
 INTERPRET_BATCH = int(os.getenv("INTERPRET_BATCH", "5"))
 
+# Link re-checking: also slow (one request per listing, spaced by the
+# source's rate limit), so it rides the same slow queue as the model.
+LIVENESS_INTERVAL_MINUTES = int(os.getenv("LIVENESS_INTERVAL_MINUTES", "20"))
+LIVENESS_BATCH = int(os.getenv("LIVENESS_BATCH", "5"))
+
 
 def seconds_between_crawls(source):
     """Smallest safe gap between two crawls of this source, in seconds.
@@ -126,6 +131,23 @@ def publish_interpretation(source):
           f"(search_id={search_id})", flush=True)
 
 
+def publish_liveness(source):
+    """Ask a worker to re-check a few of this source's stored links."""
+    search_id = f"live-{uuid.uuid4().hex[:8]}"
+    conn = get_rabbit_connection()
+    ch = conn.channel()
+    ch.queue_declare(queue=INTERPRET_QUEUE, durable=True)
+    task = {"source": source, "search_id": search_id,
+            "type": "liveness", "batch": LIVENESS_BATCH}
+    ch.basic_publish(
+        exchange="", routing_key=INTERPRET_QUEUE, body=json.dumps(task),
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+    conn.close()
+    print(f"[scheduler] published link check for {source} "
+          f"(search_id={search_id})", flush=True)
+
+
 def main():
     sources = all_sources()
     if not sources:
@@ -143,6 +165,9 @@ def main():
         if "--interpret" in sys.argv:
             for source in sources:
                 publish_interpretation(source)
+        if "--liveness" in sys.argv:
+            for source in sources:
+                publish_liveness(source)
         print("[scheduler] one round published, exiting.")
         return
 
@@ -183,6 +208,17 @@ def main():
         )
     print(f"[scheduler] interpretation: every {INTERPRET_INTERVAL_MINUTES} min "
           f"per source, {INTERPRET_BATCH} jobs per task")
+
+    # Link re-checking, offset from the interpretation runs
+    for position, source in enumerate(sources):
+        scheduler.add_job(
+            publish_liveness, "interval",
+            seconds=LIVENESS_INTERVAL_MINUTES * 60, args=[source],
+            id=f"live-{source}", max_instances=1, coalesce=True,
+            next_run_time=datetime.now() + timedelta(seconds=120 + 5 * position),
+        )
+    print(f"[scheduler] link checks: every {LIVENESS_INTERVAL_MINUTES} min "
+          f"per source, {LIVENESS_BATCH} links per task")
 
     print("[scheduler] started. Press CTRL+C to stop.", flush=True)
     scheduler.start()

@@ -5,8 +5,11 @@ Hand-judging is slow, so this measures three things without a human:
 1. Skill grounding - what share of the skills the model listed actually
    appear in the description. Low grounding means the model is inventing
    skills, which is the failure that matters most.
-2. Seniority agreement - compared against a plain keyword rule read from
-   the description ("intern", "5+ years", "senior", "manager", ...).
+2. Seniority. Jobs whose title names a level ("Senior", "Intern",
+   "Director") are decided in the pipeline by a title rule, so they are
+   reported separately as a check that the stored value matches the rule.
+   The remaining jobs are the ones the model actually judged, and those
+   are compared against the years of experience the description asks for.
 3. Work arrangement agreement - same idea ("fully remote", "hybrid",
    "in office", ...).
 
@@ -22,18 +25,20 @@ import re
 import sys
 
 from db_utils import get_db_connection
+from title_rules import seniority_from_title
 
 
 def rule_seniority(text):
-    """Guess seniority from the description. None when it doesn't say."""
-    t = text.lower()
-    if re.search(r"\b(intern|internship|co-op|student)\b", t):
-        return "intern"
-    if re.search(r"\b(manager|head of|director|vp of engineering)\b", t):
-        return "lead"
-    if re.search(r"\b(senior|staff|principal|sr\.)\b", t):
-        return "senior"
-    years = re.search(r"(\d+)\s*\+?\s*(?:-\s*\d+\s*)?years", t)
+    """Guess seniority from years of experience alone. None when unclear.
+
+    The title is deliberately NOT read here. Titles that name a level are
+    decided in the pipeline itself, by interpreter.seniority_from_title(),
+    so scoring them would only compare that rule against itself. This
+    function judges the jobs the model actually had to decide.
+    """
+    t = (text or "").lower()
+    years = re.search(r"(\d+)\s*\+?\s*(?:-\s*\d+\s*)?years?(?:\s+of)?"
+                      r"(?:\s+\w+){0,3}\s+experience", t)
     if years:
         n = int(years.group(1))
         if n <= 2:
@@ -41,24 +46,30 @@ def rule_seniority(text):
         if n <= 4:
             return "mid"
         return "senior"
-    if re.search(r"\b(entry[- ]level|new grad|graduate role)\b", t):
+    if re.search(r"\b(entry[- ]level|new grad|recent graduate)\b", t):
         return "junior"
     return None
 
 
 def rule_arrangement(text):
-    """Guess remote/hybrid/onsite from the description. None when unclear."""
-    t = text.lower()
-    if re.search(r"\bhybrid\b|days (?:per week )?in (?:the )?office|"
-                 r"\d+\s*days a week onsite", t):
+    """Guess remote/hybrid/onsite from the description. None when unclear.
+
+    Only clear statements count. Vague phrases like "in person" appear in
+    benefits and culture boilerplate, so they are not enough on their own.
+    """
+    t = (text or "").lower()
+    if re.search(r"\bhybrid\b|\d+\s*days?\s*(?:per week\s*)?in\s*(?:the\s*)?"
+                 r"office|\d+\s*days a week (?:onsite|on-site|in office)", t):
         return "hybrid"
     if re.search(r"\b(fully remote|100% remote|work from anywhere|"
-                 r"remote[- ]first|distributed team)\b", t):
+                 r"remote[- ]first|fully distributed|remote \(us\)|"
+                 r"this (?:role|position) is remote)\b", t):
         return "remote"
-    if re.search(r"\b(on-?site|in-?office|in person|based (?:out )?of our)\b", t):
+    if re.search(r"\b(on-?site (?:role|position|daily)|"
+                 r"required to (?:work )?(?:in|from) (?:the )?office|"
+                 r"in-?office (?:role|position)|"
+                 r"work from our .{0,20}office)\b", t):
         return "onsite"
-    if re.search(r"\bremote\b", t):
-        return "remote"
     return None
 
 
@@ -89,6 +100,7 @@ def main():
     grounded = total_skills = 0
     jobs_with_skills = empty_skills = 0
     sen_agree = sen_judged = 0
+    by_title = title_ok = 0
     arr_agree = arr_judged = 0
     disagreements = []
 
@@ -106,15 +118,28 @@ def main():
         else:
             empty_skills += 1
 
-        expected = rule_seniority(text)
-        if expected:
-            sen_judged += 1
-            if expected == seniority:
-                sen_agree += 1
+        # Jobs whose title names a level are set by the rule, not the model.
+        # They are reported separately: counting them as "agreement" would
+        # be the rule agreeing with itself.
+        stated = seniority_from_title(title)
+        if stated:
+            by_title += 1
+            if stated == seniority:
+                title_ok += 1
             elif len(disagreements) < 10:
                 disagreements.append(
-                    f"seniority  {source:<12} model={seniority:<8} "
-                    f"rule={expected:<8} {title[:45]}")
+                    f"seniority  {source:<12} stored={seniority:<8} "
+                    f"title={stated:<8} {title[:45]}  (needs re-interpret)")
+        else:
+            expected = rule_seniority(text)
+            if expected:
+                sen_judged += 1
+                if expected == seniority:
+                    sen_agree += 1
+                elif len(disagreements) < 10:
+                    disagreements.append(
+                        f"seniority  {source:<12} model={seniority:<8} "
+                        f"rule={expected:<8} {title[:45]}")
 
         expected = rule_arrangement(text)
         if expected:
@@ -134,8 +159,10 @@ def main():
           f"({pct(grounded, total_skills)}) of listed skills appear in the text")
     print(f"Jobs with skills     {jobs_with_skills}/{len(rows)} "
           f"({pct(jobs_with_skills, len(rows))}), {empty_skills} returned none")
+    print(f"Seniority by title   {title_ok}/{by_title} "
+          f"({pct(title_ok, by_title)}) set by the title rule, not the model")
     print(f"Seniority agreement  {sen_agree}/{sen_judged} "
-          f"({pct(sen_agree, sen_judged)}) where the text states a level")
+          f"({pct(sen_agree, sen_judged)}) on the rest, vs years of experience")
     print(f"Arrangement agree.   {arr_agree}/{arr_judged} "
           f"({pct(arr_agree, arr_judged)}) where the text states one")
 

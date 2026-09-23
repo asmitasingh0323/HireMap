@@ -7,7 +7,8 @@ import pika
 from dotenv import load_dotenv
 from db_utils import (save_jobs, record_task_status, ensure_schema,
                       expire_stale_jobs, jobs_needing_interpretation,
-                      save_interpretation)
+                      save_interpretation, jobs_to_recheck, record_url_check)
+from liveness import check_jobs
 from interpreter import interpret_job, ModelError, model_is_available
 from connections import get_rabbit_connection
 from adapters import get_adapter
@@ -76,6 +77,24 @@ def process_task(ch, method, properties, body):
                   f"expired={expired}, time={duration}s")
             record_task_status(search_id, f"{source}-freshness", WORKER_ID,
                                0, expired)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        if task_type == "liveness":
+            # Ask the source whether each stored link still exists. Requests
+            # are spaced by that source's own rate limit, inside check_jobs.
+            batch = int(task.get("batch", 5))
+            jobs = jobs_to_recheck(source, limit=batch)
+            live, gone, unknown = check_jobs(
+                jobs, source,
+                on_result=lambda job, verdict, code:
+                    record_url_check(job["fingerprint"], verdict, code))
+            duration = round(time.time() - start, 2)
+            print(f"[{WORKER_ID}] DONE liveness source={source}: "
+                  f"checked={len(jobs)}, live={live}, gone={gone}, "
+                  f"unclear={unknown}, time={duration}s")
+            record_task_status(search_id, f"{source}-liveness", WORKER_ID,
+                               len(jobs), gone)
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 

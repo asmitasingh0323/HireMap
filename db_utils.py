@@ -33,6 +33,9 @@ SCHEMA_UPDATES = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_min_ai NUMERIC",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_max_ai NUMERIC",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_basis TEXT",
+    # Link re-checking (phase 2, weeks 7-8)
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS url_checked_at TIMESTAMP",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS url_status INTEGER",
 ]
 
 
@@ -255,3 +258,56 @@ def interpretation_summary():
     cur.close()
     conn.close()
     return rows
+
+
+# How long before a listing's link is worth checking again.
+RECHECK_AFTER_HOURS = int(os.getenv("RECHECK_AFTER_HOURS", "24"))
+
+
+def jobs_to_recheck(source, limit=5):
+    """Active jobs with a link that has not been checked recently.
+
+    Never-checked listings come first, then the ones checked longest ago.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT fingerprint, title, url, url_checked_at
+        FROM jobs
+        WHERE status = 'active'
+          AND source = %s
+          AND url IS NOT NULL
+          AND (url_checked_at IS NULL
+               OR url_checked_at < NOW() - (%s * INTERVAL '1 hour'))
+        ORDER BY url_checked_at ASC NULLS FIRST
+        LIMIT %s
+    """, (source, RECHECK_AFTER_HOURS, limit))
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return rows
+
+
+def record_url_check(fingerprint, verdict, status_code):
+    """Save the outcome of a link check. "gone" expires the listing.
+
+    "unknown" only records the attempt: a site that blocks us, or a network
+    hiccup, must never be read as a job being taken down.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if verdict == "gone":
+        cur.execute("""
+            UPDATE jobs
+            SET status = 'expired', url_checked_at = NOW(), url_status = %s
+            WHERE fingerprint = %s
+        """, (status_code, fingerprint))
+    else:
+        cur.execute("""
+            UPDATE jobs
+            SET url_checked_at = NOW(), url_status = %s
+            WHERE fingerprint = %s
+        """, (status_code, fingerprint))
+    conn.commit()
+    cur.close()
+    conn.close()

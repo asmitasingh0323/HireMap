@@ -19,6 +19,8 @@ import json
 import requests
 from dotenv import load_dotenv
 
+from title_rules import seniority_from_title
+
 load_dotenv()
 
 # Which local model to use, and where Ollama is listening.
@@ -35,7 +37,7 @@ ARRANGEMENT_VALUES = {"remote", "hybrid", "onsite", "unknown"}
 
 PROMPT_TEMPLATE = """You read job postings and return facts about them.
 
-Job title: {title}
+Job title: {title}   <- the seniority answer comes from this
 Company: {company}
 Location: {location}
 
@@ -50,14 +52,24 @@ Return ONLY a JSON object with exactly these keys:
   "preferred_skills": at most 6 skills described as nice-to-have, "bonus",
             "preferred", "a plus". [] if none.
   "seniority": one of "intern", "junior", "mid", "senior", "lead", "unknown".
-            Decide from the experience asked for, not only the title:
-              internship or student role     -> "intern"
-              0-2 years, "entry level", "new grad" -> "junior"
-              3-5 years, no "senior" in title      -> "mid"
-              5+ years, or "senior"/"staff"/"principal" in the title -> "senior"
-              manages engineers, "manager", "head of", "director" -> "lead"
-            Use "unknown" only when the description says nothing about
-            experience level at all.
+            THE JOB TITLE DECIDES THIS. Read the title first:
+              title has "intern" or "internship"          -> "intern"
+              title has "manager", "head of", "director",
+                "vp" (but NOT "product/program/project
+                manager", which are not people managers)  -> "lead"
+              title has "senior", "sr.", "staff",
+                "principal" or "lead"                     -> "senior"
+              title has "junior", "jr.", "associate",
+                "entry level", "new grad"                 -> "junior"
+            Only if the title says none of that, use the experience asked
+            for in the description:
+              0-2 years  -> "junior"
+              3-5 years  -> "mid"
+              5+ years   -> "senior"
+            An "Engineering Manager" is "lead" even when the description
+            talks mostly about hands-on engineering work.
+            Use "unknown" only when neither the title nor the description
+            says anything about level.
   "work_arrangement": one of "remote", "hybrid", "onsite", "unknown".
             This is HOW the work is done, not where the company hires.
             A city in the location field does NOT make a job remote.
