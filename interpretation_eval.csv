@@ -1,0 +1,21 @@
+checked_at,fingerprint,source,title,model,skills_ok,seniority_ok,arrangement_ok
+2026-09-22T14:39:04,7801dff62276afb6823cad357fc7b4429f016f970b87233b6bbd4e4d5828a8ef,greenhouse,Senior Software Engineer - Data Platform,ollama:llama3.2:3b,y,y,s
+2026-09-22T14:39:04,d32c69c27d3cd9707e9199585f9138140cd8826c799df4bf9b57e55cd3b4d906,arbeitnow,Senior Data Engineer - Real time analytics,ollama:llama3.2:3b,y,y,y
+2026-09-22T14:39:04,2c768c29203614ba817561692d44fad91f2790f9ada8923a543bc6be8a201b59,greenhouse,"Frontend Engineer, Data Product Experiences",ollama:llama3.2:3b,y,y,s
+2026-09-22T14:39:04,9b99de657e7beb9e98fe258d2220c719b9dc89652b17b45a5195ac8b1ec2bf59,remotive,Senior QA Engineer,ollama:llama3.2:3b,s,s,s
+2026-09-22T14:39:04,16fca5af6eb3f2cb62535c78f01ceafd25db3189d8e90f6469fea35c2d7f5fba,arbeitnow,Senior Data Engineer - Real time analytics,ollama:llama3.2:3b,s,s,s
+2026-09-22T14:39:04,65061718b57921f3da0c18966a856646d2cfad091daec280761c72e571470b6d,adzuna,Data Engineer,ollama:llama3.2:3b,s,s,s
+2026-09-22T14:39:04,4a040efbf39b84d7b10ca234e71170babee8c0cdd42301b7661f5b4292590298,greenhouse,"Software Engineer, Stripe Data Pipeline",ollama:llama3.2:3b,s,s,s
+2026-09-22T14:39:04,8097901e94ad9ec88724c1aee497bf1255b07fe0bf46d808e85801750acc3f07,remotive,Senior Data Scientist,ollama:llama3.2:3b,y,y,s
+2026-09-22T14:39:04,3dbb57e73d8d9ab91d77207c041e6d5c7571a153f568be6125b58797aa23a5b0,adzuna,Data Engineer,ollama:llama3.2:3b,y,y,s
+2026-09-22T14:39:04,ffc59e9e9054b6e11e47dc7dce20c60f94ece7a011373f68a9f65272bdc3e0fd,adzuna,Recruiting Systems & Data Integration Engineer,ollama:llama3.2:3b,y,y,s
+2026-09-23T13:42:00,e20fedb2635758a8a373e6fd012d5482a8b06d7404967f8b9c1f9a4268f83575,greenhouse,Senior Software Engineer - Database Engine Internals,ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,79032696b8d775a4da9d18b476f423de02d044b650038d21c69ef3bb3d3fa539,adzuna,Security Automation Engineer,ollama:llama3.2:3b,n,y,n
+2026-09-23T13:42:00,09b671da620c8d13c7e08cd175823be4fc685930f6814d0a69f1ff1af8cac130,arbeitnow,Senior Data Engineer,ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,153562813be656634fed1379548dfc65e8e968656f87daacf26fdf2fe7f17d36,adzuna,Senior Data Engineer,ollama:llama3.2:3b,y,y,n
+2026-09-23T13:42:00,571016fd90e5e1bed356ee3804fcd1fdaf526066d5d71b3aad719a0ff1f37763,greenhouse,Engineering Manager - Data Visualization Platform,ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,199f5e41b735c012810b20e5001695911b119ce0dfabd03606150aa33d1794db,remotive,Senior .NET Full-stack Developer,ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,f8ae0d86d7624a4b6d2c77bd889a47953b16aa7b27bfb6d7d15b44ce25facdd2,adzuna,Sr. Data Engineer,ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,7801dff62276afb6823cad357fc7b4429f016f970b87233b6bbd4e4d5828a8ef,greenhouse,Senior Software Engineer - Data Platform,ollama:llama3.2:3b,n,y,y
+2026-09-23T13:42:00,0a096dff06967c1c62213716b0bd50f654b81f5303d5922671f367dfbba84961,greenhouse,Data Engineer Intern (2027),ollama:llama3.2:3b,y,y,y
+2026-09-23T13:42:00,91f580c1991d7710b700f6ad8dde331f64e7132f4d6fd8dff0e72b2519948055,arbeitnow,Senior Python Developer (w/m/d) - Remote,ollama:llama3.2:3b,y,y,n
