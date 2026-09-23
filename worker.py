@@ -14,10 +14,19 @@ from adapters import get_adapter
 
 load_dotenv()
 
-TASK_QUEUE = "task_queue"
+# Two queues, because the two kinds of work have very different speeds.
+# Crawls and freshness checks take seconds and a person is waiting for them;
+# reading a description with the model takes up to a minute. Sharing one
+# queue meant a dashboard search waited behind the model. They are separate
+# now, so slow AI work can never delay a search.
+TASK_QUEUE = "task_queue"              # crawls, freshness
+INTERPRET_QUEUE = "interpret_queue"    # model work only
 
 # Each worker gets an ID so we can see which one did what
 WORKER_ID = sys.argv[1] if len(sys.argv) > 1 else f"worker-{os.getpid()}"
+
+# "python worker.py ai-1 --interpret" runs a worker that ONLY does model work
+INTERPRET_ONLY = "--interpret" in sys.argv
 
 
 def connect():
@@ -82,7 +91,11 @@ def process_task(ch, method, properties, body):
                     save_interpretation(
                         job["fingerprint"], result["skills"],
                         result["seniority"], result["work_arrangement"],
-                        result["model"])
+                        result["model"],
+                        preferred_skills=result.get("preferred_skills"),
+                        salary_min=result.get("salary_min"),
+                        salary_max=result.get("salary_max"),
+                        salary_basis=result.get("salary_basis"))
                     done += 1
                 except ModelError as e:
                     # A job the model cannot read must not stop the batch.
@@ -140,15 +153,21 @@ def main():
         hb_thread = threading.Thread(target=start_heartbeat, daemon=True)
         hb_thread.start()
 
+    queue_name = INTERPRET_QUEUE if INTERPRET_ONLY else TASK_QUEUE
+    role = "interpretation only" if INTERPRET_ONLY else "crawls and freshness"
+
     print(f"[{WORKER_ID}] connecting to RabbitMQ...", flush=True)
     conn = connect()
     ch = conn.channel()
+    # Declare both, so whichever worker starts first creates them
     ch.queue_declare(queue=TASK_QUEUE, durable=True)
-    print(f"[{WORKER_ID}] connected, queue declared", flush=True)
+    ch.queue_declare(queue=INTERPRET_QUEUE, durable=True)
+    print(f"[{WORKER_ID}] connected, listening on '{queue_name}' ({role})",
+          flush=True)
 
     # Fair dispatch: don't give a worker a new task until it ACKs the current one
     ch.basic_qos(prefetch_count=1)
-    ch.basic_consume(queue=TASK_QUEUE, on_message_callback=process_task)
+    ch.basic_consume(queue=queue_name, on_message_callback=process_task)
 
     print(f"[{WORKER_ID}] Waiting for tasks. Press CTRL+C to exit.", flush=True)
     try:

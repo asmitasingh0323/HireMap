@@ -45,9 +45,10 @@ Job description:
 \"\"\"
 
 Return ONLY a JSON object with exactly these keys:
-  "skills": a list of at most 8 concrete required skills or technologies,
-            lowercase, each 1-3 words (for example "python", "aws", "sql").
-            Use only skills the description actually asks for. [] if unclear.
+  "required_skills": at most 8 skills the posting REQUIRES (must-have,
+            "you have", "required"), lowercase, 1-3 words each. [] if unclear.
+  "preferred_skills": at most 6 skills described as nice-to-have, "bonus",
+            "preferred", "a plus". [] if none.
   "seniority": one of "intern", "junior", "mid", "senior", "lead", "unknown".
             Decide from the experience asked for, not only the title:
               internship or student role     -> "intern"
@@ -65,6 +66,12 @@ Return ONLY a JSON object with exactly these keys:
               says on-site, in-office, or names an office the
                 person must work from                        -> "onsite"
             Use "unknown" when the description does not say.
+  "salary_min": yearly US dollars as a plain number, or null.
+  "salary_max": yearly US dollars as a plain number, or null.
+  "salary_basis": "stated" if the posting gives pay, "estimated" if you
+            inferred a typical US range for this role and seniority,
+            "unknown" if you cannot say. If the posting gives an hourly
+            rate, convert it to a year using 2080 hours.
 
 No explanation, no extra keys."""
 
@@ -114,17 +121,50 @@ def parse_answer(text):
     if not isinstance(data, dict):
         raise ModelError("answer was not an object")
 
-    raw_skills = data.get("skills") or []
-    if isinstance(raw_skills, str):                  # "python, sql"
-        raw_skills = [s for s in re.split(r"[,;]", raw_skills)]
-    skills = []
-    for skill in raw_skills:
-        if not isinstance(skill, (str, int, float)):
-            continue
-        cleaned = re.sub(r"\s+", " ", str(skill)).strip().lower()
-        if cleaned and len(cleaned) <= 30 and cleaned not in skills:
-            skills.append(cleaned)
-    skills = skills[:8]
+    def clean_skill_list(raw, cap):
+        if isinstance(raw, str):                     # "python, sql"
+            raw = re.split(r"[,;]", raw)
+        out = []
+        for skill in raw or []:
+            if not isinstance(skill, (str, int, float)):
+                continue
+            cleaned = re.sub(r"\s+", " ", str(skill)).strip().lower()
+            if cleaned and len(cleaned) <= 30 and cleaned not in out:
+                out.append(cleaned)
+        return out[:cap]
+
+    # "skills" is still accepted so older prompts keep working
+    skills = clean_skill_list(
+        data.get("required_skills") or data.get("skills"), 8)
+    preferred = [s for s in clean_skill_list(data.get("preferred_skills"), 6)
+                 if s not in skills]
+
+    def clean_money(value):
+        """A yearly dollar figure, or None. Hourly rates are scaled to a year."""
+        if value in (None, "", "null"):
+            return None
+        try:
+            amount = float(re.sub(r"[^\d.]", "", str(value)) or 0)
+        except ValueError:
+            return None
+        if amount <= 0:
+            return None
+        if amount < 500:            # looks like an hourly rate
+            amount *= 2080
+        if amount < 10000 or amount > 2000000:
+            return None             # outside anything believable
+        return round(amount)
+
+    salary_min = clean_money(data.get("salary_min"))
+    salary_max = clean_money(data.get("salary_max"))
+    if salary_min and salary_max and salary_min > salary_max:
+        salary_min, salary_max = salary_max, salary_min
+
+    basis = str(data.get("salary_basis", "unknown")).strip().lower()
+    if basis not in {"stated", "estimated", "unknown"}:
+        basis = "unknown"
+    if not (salary_min or salary_max):
+        basis = "unknown"
 
     seniority = str(data.get("seniority", "unknown")).strip().lower()
     if seniority not in SENIORITY_VALUES:
@@ -136,8 +176,12 @@ def parse_answer(text):
 
     return {
         "skills": skills,
+        "preferred_skills": preferred,
         "seniority": seniority,
         "work_arrangement": arrangement,
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "salary_basis": basis,
     }
 
 
@@ -184,8 +228,13 @@ if __name__ == "__main__":
         print(f"\n--- {job['title']} @ {job['company']} ({job['source']})")
         try:
             result = interpret_job(job)
-            print(f"    skills     : {', '.join(result['skills']) or '(none)'}")
+            print(f"    required   : {', '.join(result['skills']) or '(none)'}")
+            print(f"    preferred  : "
+                  f"{', '.join(result['preferred_skills']) or '(none)'}")
             print(f"    seniority  : {result['seniority']}")
             print(f"    arrangement: {result['work_arrangement']}")
+            if result["salary_min"] or result["salary_max"]:
+                print(f"    salary     : {result['salary_min']} - "
+                      f"{result['salary_max']} ({result['salary_basis']})")
         except ModelError as e:
             print(f"    FAILED: {e}")

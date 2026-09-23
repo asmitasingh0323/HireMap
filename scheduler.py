@@ -29,7 +29,9 @@ from adapters import all_sources, get_adapter
 
 load_dotenv()
 
-TASK_QUEUE = "task_queue"
+TASK_QUEUE = "task_queue"              # crawls and freshness checks
+INTERPRET_QUEUE = "interpret_queue"    # model work, kept apart so slow
+                                       # interpretation never delays a search
 
 # The searches to keep up to date. Add or remove lines as you like.
 CRAWLS = [
@@ -48,7 +50,7 @@ FRESHNESS_INTERVAL_MINUTES = int(os.getenv("FRESHNESS_INTERVAL_MINUTES", "60"))
 # How often to hand new postings to the model, and how many per task.
 # Interpretation is slow on a laptop, so keep batches small and steady:
 # postings are decoded as they arrive rather than all at once.
-INTERPRET_INTERVAL_MINUTES = int(os.getenv("INTERPRET_INTERVAL_MINUTES", "5"))
+INTERPRET_INTERVAL_MINUTES = int(os.getenv("INTERPRET_INTERVAL_MINUTES", "10"))
 INTERPRET_BATCH = int(os.getenv("INTERPRET_BATCH", "5"))
 
 
@@ -112,10 +114,11 @@ def publish_interpretation(source):
     conn = get_rabbit_connection()
     ch = conn.channel()
     ch.queue_declare(queue=TASK_QUEUE, durable=True)
+    ch.queue_declare(queue=INTERPRET_QUEUE, durable=True)
     task = {"source": source, "search_id": search_id,
             "type": "interpret", "batch": INTERPRET_BATCH}
     ch.basic_publish(
-        exchange="", routing_key=TASK_QUEUE, body=json.dumps(task),
+        exchange="", routing_key=INTERPRET_QUEUE, body=json.dumps(task),
         properties=pika.BasicProperties(delivery_mode=2),
     )
     conn.close()

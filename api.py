@@ -64,7 +64,9 @@ def fetch_results_for_source(search_id, source):
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
                job_type, experience_level, posted_date, source, url,
-               status, first_seen, last_seen
+               status, first_seen, last_seen,
+               extracted_skills, preferred_skills, seniority,
+               work_arrangement, salary_min_ai, salary_max_ai, salary_basis
         FROM jobs
         WHERE search_id = %s AND source = %s AND status = 'active'
     """, (search_id, source))
@@ -80,7 +82,9 @@ def fetch_all_results(search_id):
     cur.execute("""
         SELECT title, company, location, skills, salary_min, salary_max,
                job_type, experience_level, posted_date, source, url,
-               status, first_seen, last_seen
+               status, first_seen, last_seen,
+               extracted_skills, preferred_skills, seniority,
+               work_arrangement, salary_min_ai, salary_max_ai, salary_basis
         FROM jobs
         WHERE search_id = %s AND status = 'active'
         ORDER BY source

@@ -28,6 +28,11 @@ SCHEMA_UPDATES = [
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS work_arrangement TEXT",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interpreted_at TIMESTAMP",
     "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interpretation_model TEXT",
+    # Salary and nice-to-have skills (phase 2, weeks 11-12)
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS preferred_skills TEXT",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_min_ai NUMERIC",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_max_ai NUMERIC",
+    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_basis TEXT",
 ]
 
 
@@ -203,20 +208,33 @@ def jobs_needing_interpretation(limit=10, source=None):
     return rows
 
 
-def save_interpretation(fingerprint, skills, seniority, work_arrangement, model):
-    """Store what the model found, next to the original job."""
+def save_interpretation(fingerprint, skills, seniority, work_arrangement, model,
+                        preferred_skills=None, salary_min=None,
+                        salary_max=None, salary_basis=None):
+    """Store what the model found, next to the original job.
+
+    Salary from the model is kept in its own columns, so the figure a source
+    published (salary_min/salary_max) is never overwritten by an estimate.
+    """
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         UPDATE jobs
         SET extracted_skills = %s,
+            preferred_skills = %s,
             seniority = %s,
             work_arrangement = %s,
+            salary_min_ai = %s,
+            salary_max_ai = %s,
+            salary_basis = %s,
             interpreted_at = NOW(),
             interpretation_model = %s
         WHERE fingerprint = %s
-    """, (", ".join(skills) if skills else None, seniority,
-          work_arrangement, model, fingerprint))
+    """, (", ".join(skills) if skills else None,
+          ", ".join(preferred_skills) if preferred_skills else None,
+          seniority, work_arrangement,
+          salary_min, salary_max, salary_basis,
+          model, fingerprint))
     conn.commit()
     cur.close()
     conn.close()

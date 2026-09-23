@@ -28,6 +28,31 @@ function freshnessLabel(job) {
   return `${word} ${days} days ago \u00b7 still active`;
 }
 
+// Small helpers for the decoded job card
+const SENIORITY_COLORS = {
+  intern: "#64748b", junior: "#0ea5e9", mid: "#8b5cf6",
+  senior: "#f59e0b", lead: "#ef4444", unknown: "#94a3b8",
+};
+
+function money(value) {
+  if (!value) return null;
+  return `$${Math.round(value / 1000)}k`;
+}
+
+// "$153k - $376k (estimated)" or null when nothing is known
+function salaryLine(job) {
+  const low = money(job.salary_min_ai) || money(job.salary_min);
+  const high = money(job.salary_max_ai) || money(job.salary_max);
+  if (!low && !high) return null;
+  const range = low && high ? `${low} - ${high}` : (low || high);
+  return range + (job.salary_basis === "estimated" ? " (estimated)" : "");
+}
+
+function splitSkills(text) {
+  if (!text) return [];
+  return text.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 export default function App() {
   const [keyword, setKeyword] = useState("python developer");
   const [location, setLocation] = useState("Seattle");
@@ -84,8 +109,10 @@ export default function App() {
   const skillData = useMemo(() => {
     const counts = {};
     jobs.forEach((j) => {
-      if (!j.skills) return;
-      j.skills.split(",").forEach((s) => {
+      // Prefer the model's required skills; fall back to the source's tags
+      const source = j.extracted_skills || j.skills;
+      if (!source) return;
+      source.split(",").forEach((s) => {
         const skill = s.trim().toLowerCase();
         if (skill) counts[skill] = (counts[skill] || 0) + 1;
       });
@@ -213,9 +240,61 @@ export default function App() {
             </div>
             <div className="job-meta">
               {j.location || "—"}
-              {j.salary_min ? ` · $${Math.round(j.salary_min).toLocaleString()}+` : ""}
-              {j.skills ? ` · ${j.skills.split(",").slice(0, 3).join(", ")}` : ""}
+              {salaryLine(j) ? ` · ${salaryLine(j)}` : ""}
             </div>
+
+            {/* What the model pulled out of the description */}
+            {(j.seniority || j.work_arrangement || j.extracted_skills) && (
+              <div className="job-decoded" style={{ marginTop: 6 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                              marginBottom: 4 }}>
+                  {j.seniority && j.seniority !== "unknown" && (
+                    <span style={{
+                      fontSize: "0.72rem", padding: "2px 8px", borderRadius: 10,
+                      color: "#fff", textTransform: "capitalize",
+                      background: SENIORITY_COLORS[j.seniority] || "#94a3b8",
+                    }}>{j.seniority}</span>
+                  )}
+                  {j.work_arrangement && j.work_arrangement !== "unknown" && (
+                    <span style={{
+                      fontSize: "0.72rem", padding: "2px 8px", borderRadius: 10,
+                      border: "1px solid #cbd5e1", color: "#475569",
+                      textTransform: "capitalize",
+                    }}>{j.work_arrangement}</span>
+                  )}
+                </div>
+
+                {splitSkills(j.extracted_skills).length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap",
+                                alignItems: "center", marginBottom: 3 }}>
+                    <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                      needs
+                    </span>
+                    {splitSkills(j.extracted_skills).map((skill) => (
+                      <span key={skill} style={{
+                        fontSize: "0.72rem", padding: "1px 7px", borderRadius: 4,
+                        background: "#e0e7ff", color: "#3730a3",
+                      }}>{skill}</span>
+                    ))}
+                  </div>
+                )}
+
+                {splitSkills(j.preferred_skills).length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap",
+                                alignItems: "center" }}>
+                    <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                      nice to have
+                    </span>
+                    {splitSkills(j.preferred_skills).map((skill) => (
+                      <span key={skill} style={{
+                        fontSize: "0.72rem", padding: "1px 7px", borderRadius: 4,
+                        background: "#f1f5f9", color: "#475569",
+                      }}>{skill}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="job-actions">
               {j.url ? (
                 <a className="apply-btn" href={j.url} target="_blank" rel="noopener noreferrer">
